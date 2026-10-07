@@ -1,0 +1,851 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Countdown</title>
+<style>
+  :root {
+    --bg: #084F6A;
+    --fill: #0B6B8E;
+    --fg: #FFFFFF;
+    --muted: rgba(255,255,255,.6);
+    --font: "Century Gothic", "CenturyGothic", "TeX Gyre Adventor", "URW Gothic", "Avant Garde", "Futura", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: var(--font); font-weight: 700;
+    overflow: hidden; cursor: pointer; user-select: none;
+  }
+  [hidden] { display: none !important; }
+
+  /* Ansicht: Balken / Zahlen */
+  #fill { position: fixed; inset: 0; background: var(--fill); transform-origin: left center; }
+  #time {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: min(28vw, 50vh); line-height: 1;
+  }
+  .digits span { display: inline-block; text-align: center; }
+  .digits .d { width: .62em; }
+  .digits .c { width: .32em; }
+
+  /* Ansicht: Zug */
+  #world { position: fixed; inset: 0; width: 100vw; height: 100vh; image-rendering: pixelated; background: #6fa848; }
+  #clock {
+    position: fixed; top: 3vh; right: 3vw;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    border-radius: 16px; padding: .18em .42em .26em;
+    font-size: clamp(34px, 5vw, 110px); line-height: 1;
+    box-shadow: 0 6px 24px rgba(0,0,0,.3);
+  }
+  #clock .bar { height: .06em; margin-top: .12em; border-radius: 1em; background: rgba(255,255,255,.25); overflow: hidden; }
+  #clock .bar i { display: block; height: 100%; width: 100%; background: var(--fg); transform-origin: left; }
+  #tag {
+    position: fixed; left: 0; top: 0;
+    background: var(--bg); color: var(--fg); font-size: clamp(13px, 1.3vw, 22px);
+    padding: .25em .55em; border-radius: 8px; white-space: nowrap; pointer-events: none;
+    box-shadow: 0 3px 10px rgba(0,0,0,.3);
+  }
+  #tag::after {
+    content: ""; position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%);
+    border: 6px solid transparent; border-bottom: 0; border-top-color: var(--bg);
+  }
+  #route {
+    position: fixed; left: 50%; bottom: 3vh; transform: translateX(-50%);
+    width: min(70vw, 1100px); font-size: clamp(11px, 1vw, 16px); font-weight: 700;
+    background: color-mix(in srgb, var(--bg) 92%, transparent); color: var(--fg);
+    border-radius: 12px; padding: .7em 1.4em .9em; box-shadow: 0 6px 20px rgba(0,0,0,.3);
+  }
+  #route .labels { display: flex; justify-content: space-between; margin-bottom: .5em; letter-spacing: .02em; }
+  #route .track { position: relative; height: .8em; display: flex; }
+  #route .track span { height: 100%; }
+  #route .track span:first-child { border-radius: 1em 0 0 1em; }
+  #route .track span:nth-last-child(3) { border-radius: 0 1em 1em 0; }
+  #route .done { position: absolute; left: 0; top: 0; bottom: 0; background: rgba(8,40,55,.55); border-radius: 1em 0 0 1em; }
+  #route .loco {
+    position: absolute; top: 50%; width: 1.9em; height: 1.15em; transform: translate(-50%, -50%);
+    background: #d6372b; border: 2px solid #fff; border-radius: .25em .6em .6em .25em;
+    box-shadow: 0 2px 6px rgba(0,0,0,.35);
+  }
+
+  #hint {
+    position: fixed; left: 50%; bottom: calc(3vh + 6.2em); transform: translateX(-50%);
+    font-size: clamp(13px, 1.3vw, 20px); font-weight: 400; letter-spacing: .03em;
+    background: rgba(0,0,0,.5); color: #fff; padding: .5em 1.1em; border-radius: 999px;
+    white-space: nowrap; transition: opacity .4s;
+  }
+  body:not(.zug) #hint { background: transparent; color: var(--muted); bottom: 4vh; }
+  body.running #hint { opacity: 0; }
+  body.done #time, body.done #clock, body.done #tag { animation: blink 1s steps(2, start) infinite; }
+  @keyframes blink { to { visibility: hidden; } }
+  @media (prefers-reduced-motion: reduce) { body.done #time, body.done #clock, body.done #tag { animation: none; } }
+</style>
+</head>
+<body>
+<div id="fill"></div>
+<div id="time" class="digits"></div>
+<canvas id="world"></canvas>
+<div id="tag"></div>
+<div id="clock"><div class="digits" id="clockDigits"></div><div class="bar"><i id="clockBar"></i></div></div>
+<div id="route"><div class="labels"><span>Hauptbahnhof</span><span>Ziel</span></div><div class="track" id="routeTrack"><div class="done" id="routeDone"></div><div class="loco" id="routeLoco"></div></div></div>
+<div id="hint">Klicken zum Starten (Vollbild) · Leertaste: Pause · R: Neustart · Z: Ansicht wechseln</div>
+<script>
+(() => {
+  /* ======================= Parameter ======================= */
+  const q = new URLSearchParams(location.search);
+  const num = (k, d) => { const v = parseFloat(q.get(k)); return isFinite(v) && v > 0 ? v : d; };
+  const total = Math.round((num('min', 0) * 60 + num('sek', 0)) * 1000) || 5 * 60 * 1000;
+  const hex = k => { const v = (q.get(k) || '').replace('#', ''); return /^[0-9a-fA-F]{6}$/.test(v) ? '#' + v : null; };
+  const rs = document.documentElement.style;
+  if (hex('bg')) rs.setProperty('--bg', hex('bg'));
+  if (hex('zug')) rs.setProperty('--fill', hex('zug'));
+  if (hex('farbe')) rs.setProperty('--fg', hex('farbe'));
+  const $ = id => document.getElementById(id);
+  const hint = $('hint'), HINT = hint.textContent;
+  if (q.get('hinweis') === '0') hint.hidden = true;
+  const VIEWS = ['zug', 'balken', 'zahlen'];
+  let view = VIEWS.includes(q.get('ansicht')) ? q.get('ansicht') : 'zug';
+  const bigClock = q.get('uhr') !== 'klein';
+  const showRoute = q.get('strecke') !== '0';
+
+  const timeEl = $('time'), fillEl = $('fill'), world = $('world'), tag = $('tag'),
+        clock = $('clock'), clockDigits = $('clockDigits'), clockBar = $('clockBar'),
+        route = $('route'), routeDone = $('routeDone'), routeLoco = $('routeLoco');
+
+  /* ======================= Timer ======================= */
+  let remaining = total, endAt = null, lastTxt = '';
+  const fmt = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+  const digitsHTML = t => [...t].map(c => `<span class="${c === ':' ? 'c' : 'd'}">${c}</span>`).join('');
+  const now = () => endAt ? Math.max(0, endAt - performance.now()) : remaining;
+  function start() { if (endAt || remaining <= 0) return; endAt = performance.now() + remaining; document.body.classList.add('running'); }
+  function pause() { if (!endAt) return; remaining = Math.max(0, endAt - performance.now()); endAt = null; document.body.classList.remove('running'); }
+  function reset() { endAt = null; remaining = total; document.body.classList.remove('running', 'done'); hint.textContent = HINT; }
+  function finish() { remaining = 0; endAt = null; document.body.classList.remove('running'); document.body.classList.add('done'); hint.textContent = 'Angekommen! Klicken oder R für Neustart'; }
+  function fullscreen() { const el = document.documentElement; if (!document.fullscreenElement && el.requestFullscreen) el.requestFullscreen().catch(() => {}); }
+  function setView(v) {
+    view = v;
+    document.body.classList.toggle('zug', v === 'zug');
+    fillEl.hidden = v !== 'balken';
+    timeEl.hidden = v === 'zug';
+    world.hidden = tag.hidden = v !== 'zug';
+    clock.hidden = v !== 'zug' || !bigClock;
+    route.hidden = v !== 'zug' || !showRoute;
+  }
+  document.addEventListener('click', () => { fullscreen(); endAt ? pause() : (remaining <= 0 ? reset() : start()); });
+  document.addEventListener('keydown', e => {
+    if (e.code === 'Space') { e.preventDefault(); endAt ? pause() : (remaining <= 0 ? reset() : start()); }
+    else if (e.key === 'r' || e.key === 'R') reset();
+    else if (e.key === 'f' || e.key === 'F') fullscreen();
+    else if (e.key === 'z' || e.key === 'Z') setView(VIEWS[(VIEWS.indexOf(view) + 1) % VIEWS.length]);
+  });
+
+  /* ======================= Isometrie-Grundlagen ======================= */
+  const HW = 16, HH = 8, WX = 290, WY = 58, ORX = WY * HW, ORY = 170;
+  let OX = 0, OY = 0;
+  const SX = (x, y) => (x - y) * HW + ORX;
+  const SY = (x, y, z = 0) => (x + y) * HH - z + ORY;
+  const P = (x, y, z = 0) => [Math.round(SX(x, y) + OX), Math.round(SY(x, y, z) + OY)];
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+  const _sh = new Map();
+  function sh(hexc, f) {
+    const k = hexc + '|' + f.toFixed(2); let v = _sh.get(k);
+    if (!v) { const n = parseInt(hexc.slice(1), 16), c = x => clamp(Math.round(x * f), 0, 255); v = `rgb(${c(n >> 16 & 255)},${c(n >> 8 & 255)},${c(n & 255)})`; _sh.set(k, v); }
+    return v;
+  }
+  function poly(g, pts, fill, edge) {
+    g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
+    g.closePath(); g.fillStyle = fill; g.fill();
+    if (edge) { g.strokeStyle = fill; g.lineWidth = 1; g.stroke(); }
+  }
+  function line(g, a, b, col, w = 1) { g.strokeStyle = col; g.lineWidth = w; g.beginPath(); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); g.stroke(); }
+  function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  const hash = (a, b) => { let h = Math.imul(a * 374761393 + b * 668265263, 1274126177); h ^= h >>> 13; h = Math.imul(h, 1103515245); return ((h ^ h >>> 16) >>> 0) / 4294967296; };
+
+  /* ---- Bausteine ---- */
+  function box(g, x, y, z, w, d, h, col, topCol) {
+    const t = z + h;
+    poly(g, [P(x, y + d, z), P(x + w, y + d, z), P(x + w, y + d, t), P(x, y + d, t)], sh(col, .95), true);
+    poly(g, [P(x + w, y, z), P(x + w, y + d, z), P(x + w, y + d, t), P(x + w, y, t)], sh(col, .72), true);
+    poly(g, [P(x, y, t), P(x + w, y, t), P(x + w, y + d, t), P(x, y + d, t)], topCol || sh(col, 1.12), true);
+  }
+  function wins(g, x, y, z, w, d, h, cols, rows, r, c1, c2, p2 = .2) {
+    for (let side = 0; side < 2; side++) for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) {
+      const u0 = (i + .22) / cols, u1 = (i + .78) / cols, z0 = z + (j + .3) * h / rows, z1 = z + (j + .8) * h / rows;
+      const c = r() < p2 ? c2 : c1;
+      if (side === 0) poly(g, [P(x + w * u0, y + d, z0), P(x + w * u1, y + d, z0), P(x + w * u1, y + d, z1), P(x + w * u0, y + d, z1)], sh(c, .95));
+      else poly(g, [P(x + w, y + d * u0, z0), P(x + w, y + d * u1, z0), P(x + w, y + d * u1, z1), P(x + w, y + d * u0, z1)], sh(c, .74));
+    }
+  }
+  function gable(g, x, y, z, w, d, rh, roof, wall) {
+    const m = y + d / 2, t = z + rh;
+    poly(g, [P(x, y, z), P(x + w, y, z), P(x + w, m, t), P(x, m, t)], sh(roof, .78), true);
+    poly(g, [P(x + w, y, z), P(x + w, y + d, z), P(x + w, m, t)], sh(wall, .72), true);
+    poly(g, [P(x - .04, y + d + .05, z - .5), P(x + w + .04, y + d + .05, z - .5), P(x + w + .04, m, t), P(x - .04, m, t)], sh(roof, 1), true);
+  }
+  function cyl(g, cx, cy, z, r, h, col, topCol) {
+    const [sx, sy] = P(cx, cy, z), ty = P(cx, cy, z + h)[1], rx = r * HW * 1.414, ry = r * HH * 1.414;
+    g.fillStyle = sh(col, .95); g.beginPath(); g.ellipse(sx, sy, rx, ry, 0, 0, Math.PI * 2); g.fill(); g.fillRect(sx - rx, ty, rx * 2, sy - ty);
+    g.fillStyle = sh(col, .74); g.beginPath(); g.ellipse(sx, sy, rx, ry, 0, 0, Math.PI / 2); g.lineTo(sx, ty); g.lineTo(sx + rx, ty); g.closePath(); g.fill();
+    g.fillStyle = topCol || sh(col, 1.1); g.beginPath(); g.ellipse(sx, ty, rx, ry, 0, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = sh(col, .6); g.lineWidth = 1; g.stroke();
+  }
+  function shadowEll(g, x, y, z, rx, ry) { const [sx, sy] = P(x, y, z); g.fillStyle = 'rgba(0,30,0,.22)'; g.beginPath(); g.ellipse(sx + 2, sy + 1, rx, ry, 0, 0, Math.PI * 2); g.fill(); }
+  function conifer(g, x, y, z, s) {
+    shadowEll(g, x, y, z, 5 * s, 2.4 * s);
+    const [bx, by] = P(x, y, z);
+    g.fillStyle = '#5b3a1e'; g.fillRect(bx - 1, by - 3, 2, 3);
+    for (let i = 0; i < 3; i++) {
+      const w = (6.5 - i * 1.6) * s, yb = by - 2 - i * 4 * s, yt = yb - 7.5 * s;
+      poly(g, [[bx - w, yb], [bx, yb], [bx, yt]], '#2f7d46');
+      poly(g, [[bx, yb], [bx + w, yb], [bx, yt]], '#1d5a33');
+    }
+  }
+  function leafy(g, x, y, z, s, tint) {
+    shadowEll(g, x, y, z, 5.5 * s, 2.6 * s);
+    const [bx, by] = P(x, y, z);
+    g.fillStyle = '#5b3a1e'; g.fillRect(bx - 1, by - 4, 2, 4);
+    const c = tint || ['#3d8a3a', '#55a547', '#7cc35f'];
+    g.fillStyle = c[0]; g.beginPath(); g.arc(bx, by - 8 * s, 5.5 * s, 0, 7); g.fill();
+    g.fillStyle = c[1]; g.beginPath(); g.arc(bx - 1.6 * s, by - 9.4 * s, 3.9 * s, 0, 7); g.fill();
+    g.fillStyle = c[2]; g.beginPath(); g.arc(bx - 2.4 * s, by - 10.6 * s, 1.7 * s, 0, 7); g.fill();
+  }
+
+  /* ======================= Strecke ======================= */
+  const WAY = [[38, 30], [66, 30], [76, 26], [98, 25], [114, 28], [124, 34], [146, 34], [158, 30], [170, 29],
+               [186, 29], [198, 29], [206, 31], [224, 31], [236, 28], [254, 28]];
+  const STEP = .05;
+  function spline(pts, seg = 60) {
+    const out = [], n = pts.length;
+    for (let i = 0; i < n - 1; i++) {
+      const p0 = pts[Math.max(i - 1, 0)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(i + 2, n - 1)];
+      for (let k = 0; k < seg; k++) {
+        const t = k / seg, t2 = t * t, t3 = t2 * t;
+        out.push([0, 1].map(j => .5 * (2 * p1[j] + (-p0[j] + p2[j]) * t + (2 * p0[j] - 5 * p1[j] + 4 * p2[j] - p3[j]) * t2 + (-p0[j] + 3 * p1[j] - 3 * p2[j] + p3[j]) * t3)));
+      }
+    }
+    out.push(pts[n - 1]); return out;
+  }
+  function resample(pts) {
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    const L = cum[cum.length - 1], res = []; let j = 0;
+    for (let s = 0; s <= L; s += STEP) {
+      while (cum[j + 1] < s) j++;
+      const f = (s - cum[j]) / ((cum[j + 1] - cum[j]) || 1);
+      res.push([pts[j][0] + (pts[j + 1][0] - pts[j][0]) * f, pts[j][1] + (pts[j + 1][1] - pts[j][1]) * f]);
+    }
+    return res;
+  }
+  const TP = resample(spline(WAY)), TN = TP.length, TL = (TN - 1) * STEP;
+  function at(s) {
+    const fi = clamp(s / STEP, 0, TN - 1.001), i = Math.floor(fi), f = fi - i, a = TP[i], b = TP[i + 1];
+    const a2 = TP[Math.max(0, i - 6)], b2 = TP[Math.min(TN - 1, i + 7)];
+    return { x: a[0] + (b[0] - a[0]) * f, y: a[1] + (b[1] - a[1]) * f, ang: Math.atan2(b2[1] - a2[1], b2[0] - a2[0]) };
+  }
+
+  /* ======================= Gelände ======================= */
+  const riverX = y => 203 + 2.2 * Math.sin(y * .32);
+  const isWater = (x, y) => Math.abs(x - riverX(y)) < 1.7 || Math.hypot(x - 138, (y - 11) * 1.2) < 3.2;
+  const PEAKS = [[176, 18, 72, 9], [184, 21, 96, 10], [191, 15, 80, 9], [179, 41, 86, 10], [188, 44, 70, 9],
+                 [194, 38, 58, 7], [178, 7, 62, 8], [187, 6, 78, 8], [196, 21, 52, 7]];
+  function mountH(x, y) {
+    if (x < 165 || x > 201) return 0;
+    let h = 0;
+    for (const [px, py, ph, pr] of PEAKS) { const d = Math.hypot(x - px, (y - py) * .9); h = Math.max(h, ph * (1 - d / pr)); }
+    const ridge = 44 * clamp((x - 174) / 6, 0, 1) * clamp((195.6 - x) / 2.4, 0, 1) * Math.max(0, 1 - Math.abs(y - 29) / 9);
+    h = Math.max(h, ridge);
+    return h > .5 ? h + (h > 10 ? 2.5 * Math.sin(x * 1.7 + y * 2.3) : 0) : 0;
+  }
+  const biome = (x, y) => { const b = x + 2.5 * Math.sin(y * .4); return b < 76 ? 'city' : b < 100 ? 'sub' : b < 128 ? 'farm' : b < 150 ? 'forest' : b < 172 ? 'ind' : b < 201 ? 'mtn' : b < 230 ? 'farm2' : 'town'; };
+
+  // Abstand jeder Kachel zur Strecke + ob sie davor (Richtung Betrachter) liegt
+  const TD = new Float32Array(WX * WY).fill(99), TF = new Float32Array(WX * WY);
+  for (let i = 0; i < TN; i += 2) {
+    const [px, py] = TP[i];
+    for (let x = Math.floor(px) - 8; x <= px + 8; x++) for (let y = Math.floor(py) - 8; y <= py + 8; y++) {
+      if (x < 0 || y < 0 || x >= WX || y >= WY) continue;
+      const d = Math.hypot(x + .5 - px, y + .5 - py), k = x * WY + y;
+      if (d < TD[k]) { TD[k] = d; TF[k] = (x + y + 1) - (px + py); }
+    }
+  }
+  const td = (x, y) => (x < 0 || y < 0 || x >= WX || y >= WY) ? 99 : TD[x * WY + y];
+  const inFront = (x, y) => (x < 0 || y < 0 || x >= WX || y >= WY) ? false : TF[x * WY + y] > 0;
+
+  // Tunnelbereich auf der Strecke
+  let sIn = -1, sOut = -1;
+  for (let i = 0; i < TN; i++) if (mountH(TP[i][0], TP[i][1]) > 8) { if (sIn < 0) sIn = i * STEP; sOut = i * STEP; }
+
+  const STATIONS = [{ x0: 35, x1: 57, y: 30 }, { x0: 238, x1: 258, y: 28 }];
+  const inStation = (x, y) => STATIONS.some(s => x >= s.x0 && x <= s.x1 && y >= s.y - 5 && y <= s.y + 4);
+
+  /* ---- Bodentyp jeder Kachel ---- */
+  const FIELDS = [['#d9c25a', '#c2a945'], ['#62a13d', '#4b8730'], ['#8d6c4a', '#715438'], ['#e6d64c', '#cbb935'], ['#8cc65c', null], ['#b9c96a', '#a3b356']];
+  function groundOf(x, y) {
+    const b = biome(x, y), d = td(x, y), r = hash(x, y);
+    if (isWater(x + .5, y + .5)) return { c: '#3a8bd3', water: true };
+    if (d < 1.15) return { c: '#a49f92' };
+    if (inStation(x, y)) return { c: '#bdbab1', paved: true };
+    if (b === 'city' || b === 'town') {
+      const road = x % 7 === 0 || y % 7 === 1;
+      if (road) return { c: '#5c5f66', road: x % 7 === 0 ? 'y' : 'x', cross: x % 7 === 0 && y % 7 === 1 };
+      const park = hash(Math.floor(x / 7), Math.floor((y - 1) / 7) + (b === 'town' ? 50 : 0)) < .13;
+      return park ? { c: '#73b54a', park: true } : { c: r < .5 ? '#a9a69e' : '#b1aea6', paved: true };
+    }
+    if (b === 'sub') { if (y % 9 === 4 || x % 12 === 0) return { c: '#5c5f66', road: y % 9 === 4 ? 'x' : 'y' }; return { c: r < .5 ? '#7ab84b' : '#74b347' }; }
+    if (b === 'farm' || b === 'farm2') {
+      if (x % 6 === 0 || y % 5 === 0) return { c: '#7cb64c', lane: true };
+      const px = Math.floor(x / 6), py = Math.floor(y / 5);
+      if (hash(px + 7, py + 3) < .11) return { c: '#ab9768', yard: true };
+      const f = FIELDS[Math.floor(hash(px, py) * FIELDS.length)];
+      return { c: f[0], rows: f[1], dir: hash(py, px) < .5 ? 'x' : 'y' };
+    }
+    if (b === 'forest') return { c: r < .5 ? '#5e9a3e' : '#5a963b' };
+    if (b === 'ind') return { c: r < .5 ? '#a6a397' : '#9d9a8f', paved: true };
+    return { c: r < .5 ? '#73ad46' : '#6faa43' };
+  }
+
+  /* ======================= Bodenebene vorrendern ======================= */
+  let ground = null;
+  function buildGround() {
+    ground = document.createElement('canvas');
+    ground.width = (WX + WY) * HW; ground.height = (WX + WY) * HH + ORY + 20;
+    const g = ground.getContext('2d');
+    OX = OY = 0;
+    g.fillStyle = '#6fa848'; g.fillRect(0, 0, ground.width, ground.height);
+    for (let x = 0; x < WX; x++) for (let y = 0; y < WY; y++) {
+      const t = groundOf(x, y);
+      poly(g, [P(x, y), P(x + 1, y), P(x + 1, y + 1), P(x, y + 1)], t.c, true);
+      if (t.rows) for (let k = 1; k < 4; k++) {
+        const a = t.dir === 'x' ? [P(x + .06, y + k / 4), P(x + .94, y + k / 4)] : [P(x + k / 4, y + .06), P(x + k / 4, y + .94)];
+        line(g, a[0], a[1], t.rows, 1);
+      }
+      if (t.road) {
+        if (!t.cross) {
+          if (t.road === 'x') line(g, P(x + .25, y + .5), P(x + .6, y + .5), '#e3cf62');
+          else line(g, P(x + .5, y + .25), P(x + .5, y + .6), '#e3cf62');
+        }
+        line(g, P(x, y), P(x + 1, y), 'rgba(255,255,255,.12)');
+      }
+      if (t.water) { const r = hash(x * 3, y * 5); if (r < .5) { const p = P(x + r, y + .5); g.fillStyle = 'rgba(255,255,255,.45)'; g.fillRect(p[0], p[1], 3, 1); } }
+      if (t.paved || t.lane) line(g, P(x + 1, y), P(x + 1, y + 1), 'rgba(0,0,0,.05)');
+      if (t.park && hash(x + 99, y) < .1 && td(x, y) > 2) { const p = P(x + .5, y + .5); g.fillStyle = '#4a9be0'; g.beginPath(); g.ellipse(p[0], p[1], 9, 4.5, 0, 0, 7); g.fill(); }
+    }
+    // Ufer
+    for (let y = 0; y < WY; y++) for (let x = 130; x < 212; x++) {
+      if (isWater(x + .5, y + .5)) continue;
+      if (isWater(x - .5, y + .5) || isWater(x + 1.5, y + .5) || isWater(x + .5, y - .5) || isWater(x + .5, y + 1.5)) poly(g, [P(x, y), P(x + 1, y), P(x + 1, y + 1), P(x, y + 1)], '#c9b27e', true);
+    }
+    // Gleis: Schotter / Brückendeck, Schwellen, Schienen
+    const off = (s, o) => { const a = at(s); return [a.x - Math.sin(a.ang) * o, a.y + Math.cos(a.ang) * o]; };
+    const wet = s => { const a = at(s); return isWater(a.x, a.y) || isWater(a.x + .8, a.y) || isWater(a.x - .8, a.y); };
+    for (let s = 0; s < TL - .25; s += .25) {
+      if (mountH(...off(s, 0)) > 3) continue;
+      const w = wet(s) ? .62 : .5, col = wet(s) ? '#555a62' : '#958f81';
+      poly(g, [P(...off(s, -w)), P(...off(s, w)), P(...off(s + .26, w)), P(...off(s + .26, -w))], col, true);
+    }
+    for (let s = .1; s < TL; s += .32) {
+      if (mountH(...off(s, 0)) > 3) continue;
+      line(g, P(...off(s, -.37)), P(...off(s, .37)), '#5d4330', 2);
+    }
+    for (const o of [-.19, .19]) {
+      g.beginPath(); let first = true;
+      for (let s = 0; s < TL; s += .2) {
+        if (mountH(...off(s, 0)) > 3) { first = true; continue; }
+        const p = P(...off(s, o));
+        first ? g.moveTo(p[0], p[1]) : g.lineTo(p[0], p[1]); first = false;
+      }
+      g.strokeStyle = '#d3d8de'; g.lineWidth = 1; g.stroke();
+    }
+  }
+
+  /* ======================= Objekte ======================= */
+  const objs = [], emitters = [], roadCars = [], turbines = [];
+  function add(x, y, z, k, ext, draw, ck) { const o = { x, y, z, k, ext, draw }; o.ck = ck || o; objs.push(o); return o; }
+  const boxExt = (w, d, h) => [d * HW + 4, w * HW + 4, h + 6, (w + d) * HH + 6];
+
+  function tower(x, y, h, r, small) {
+    const pal = ['#5b7fa6', '#c8b89a', '#9aa3ad', '#a5614b', '#dfe3e6', '#4f8f9a', '#8c7aa8', '#d2a679'];
+    const col = pal[Math.floor(r() * pal.length)], bx = x + .1, by = y + .1, w = .8;
+    const glass = col === '#5b7fa6' || col === '#4f8f9a';
+    const setback = h > 70, roofH = setback ? 16 : 0;
+    const seed = Math.floor(r() * 1e9);
+    add(bx, by, 0, x + y + 2, boxExt(w, w, h + roofH + 14), g => {
+      const rr = rng(seed);
+      if (small) {
+        box(g, bx, by, 0, w, w, h, col);
+        wins(g, bx, by, 0, w, w, h, 2, Math.max(1, Math.floor(h / 7)), rr, '#3b5875', '#cfe0ee', .25);
+        if (rr() < .5) box(g, bx + .25, by + .25, h, .25, .25, 3, '#8a8f96');
+        return;
+      }
+      box(g, bx, by, 0, w, w, h, col);
+      wins(g, bx, by, 0, w, w, h, 3, Math.floor(h / 6), rr, glass ? '#2f4e6c' : '#3b5875', glass ? '#9ec4e0' : '#e8f0f6', glass ? .3 : .18);
+      if (setback) {
+        box(g, bx + .18, by + .18, h, w - .36, w - .36, roofH, col);
+        wins(g, bx + .18, by + .18, h, w - .36, w - .36, roofH, 2, 2, rr, '#2f4e6c', '#9ec4e0');
+        const tp = P(bx + w / 2, by + w / 2, h + roofH); line(g, tp, [tp[0], tp[1] - 10], '#c9cfd8'); g.fillStyle = '#ff4b3a'; g.fillRect(tp[0], tp[1] - 11, 1, 1);
+      } else {
+        box(g, bx + .15, by + .2, h, .25, .3, 3, '#8a8f96');
+        if (rr() < .4) box(g, bx + .5, by + .5, h, .2, .2, 4, '#7a8088');
+      }
+    });
+  }
+  const WALLS = ['#efe6d6', '#e8d7b8', '#dfe5ea', '#f2dccb', '#e5e0c8'];
+  const ROOFS = ['#c8473a', '#3f73c4', '#d79a36', '#4a8f57', '#8a4b3a', '#5a5f6a'];
+  function house(x, y, r) {
+    const wall = WALLS[Math.floor(r() * WALLS.length)], roof = ROOFS[Math.floor(r() * ROOFS.length)];
+    const bx = x + .2, by = y + .22, w = .62, d = .52, h = 6;
+    add(bx, by, 0, x + y + 2, boxExt(w, d, h + 10), g => {
+      box(g, bx, by, 0, w, d, h, wall);
+      poly(g, [P(bx + .1, by + d, 1.5), P(bx + .22, by + d, 1.5), P(bx + .22, by + d, 3.5), P(bx + .1, by + d, 3.5)], '#ffd86b');
+      poly(g, [P(bx + .38, by + d, 0), P(bx + .48, by + d, 0), P(bx + .48, by + d, 3.5), P(bx + .38, by + d, 3.5)], '#6a4630');
+      poly(g, [P(bx + w, by + .15, 1.5), P(bx + w, by + .3, 1.5), P(bx + w, by + .3, 3.5), P(bx + w, by + .15, 3.5)], '#d6b44e');
+      gable(g, bx, by, h, w, d, 5, roof, wall);
+      box(g, bx + .42, by + .08, h + 2, .08, .08, 4, '#5a4a40');
+    });
+  }
+  function shop(x, y, r) {
+    const col = ['#d9c7a8', '#c9d6dc', '#e2c4b0', '#cfd8c2'][Math.floor(r() * 4)], h = 9 + Math.floor(r() * 7);
+    const awn = ['#c8473a', '#2f7d6a', '#d79a36', '#3f73c4'][Math.floor(r() * 4)];
+    const bx = x + .08, by = y + .08, w = .84, seed = Math.floor(r() * 1e9);
+    add(bx, by, 0, x + y + 2, boxExt(w, w, h + 6), g => {
+      const rr = rng(seed);
+      box(g, bx, by, 0, w, w, h, col);
+      poly(g, [P(bx, by + w, 1), P(bx + w, by + w, 1), P(bx + w, by + w, 4), P(bx, by + w, 4)], '#355571');
+      poly(g, [P(bx, by + w, 4), P(bx + w, by + w, 4), P(bx + w, by + w + .12, 3), P(bx, by + w + .12, 3)], awn);
+      poly(g, [P(bx + w, by, 1), P(bx + w, by + w, 1), P(bx + w, by + w, 4), P(bx + w, by, 4)], sh('#355571', .8));
+      wins(g, bx, by, 5, w, w, h - 5, 3, Math.max(1, Math.floor((h - 5) / 5)), rr, '#3b5875', '#e8f0f6');
+      box(g, bx + .2, by + .25, h, .3, .25, 2.5, '#9aa0a8');
+    });
+  }
+  function barn(x, y) {
+    add(x + .1, y + .2, 0, x + y + 3.2, boxExt(1.7, 1, 22), g => {
+      box(g, x + .1, y + .2, 0, 1.6, .9, 9, '#b23a2c');
+      poly(g, [P(x + .6, y + 1.1, 0), P(x + 1.1, y + 1.1, 0), P(x + 1.1, y + 1.1, 6), P(x + .6, y + 1.1, 6)], '#f2ece2');
+      line(g, P(x + .62, y + 1.1, .3), P(x + 1.08, y + 1.1, 5.7), '#b23a2c'); line(g, P(x + 1.08, y + 1.1, .3), P(x + .62, y + 1.1, 5.7), '#b23a2c');
+      gable(g, x + .1, y + .2, 9, 1.6, .9, 7, '#6b6f78', '#b23a2c');
+    });
+    add(x + 2.1, y + .7, 0, x + y + 3.5, [16, 16, 34, 14], g => { cyl(g, x + 2.1, y + .7, 0, .34, 22, '#c9ccd2'); const p = P(x + 2.1, y + .7, 22); g.fillStyle = '#8a9099'; g.beginPath(); g.ellipse(p[0], p[1], 6.8, 3.4, 0, Math.PI, 0); g.fill(); });
+  }
+  function hall(x, y, w, d, r) {
+    const col = ['#b9b3a5', '#9fa8b0', '#c7b79a'][Math.floor(r() * 3)];
+    add(x, y, 0, x + w + y + d, boxExt(w, d, 24), g => {
+      box(g, x, y, 0, w, d, 12, col);
+      for (let i = 0; i < w; i++) {
+        const xa = x + i, t = 12;
+        poly(g, [P(xa, y, t), P(xa + 1, y, t + 6), P(xa + 1, y + d, t + 6), P(xa, y + d, t)], sh('#7d828a', 1.05), true);
+        poly(g, [P(xa, y + d, t), P(xa + 1, y + d, t), P(xa + 1, y + d, t + 6)], sh(col, .95), true);
+        poly(g, [P(xa + 1, y, t), P(xa + 1, y + d, t), P(xa + 1, y + d, t + 6), P(xa + 1, y, t + 6)], '#7fb3d9', true);
+      }
+      for (let i = 0; i < w; i++) poly(g, [P(x + i + .3, y + d, 0), P(x + i + .7, y + d, 0), P(x + i + .7, y + d, 7), P(x + i + .3, y + d, 7)], '#5a5f66');
+      line(g, P(x, y + d, 9), P(x + w, y + d, 9), '#d79a36', 2);
+    });
+  }
+  function chimney(x, y, h) {
+    add(x, y, 0, x + y + 1, [12, 12, h + 8, 12], g => {
+      box(g, x, y, 0, .5, .5, 4, '#7a7f87');
+      for (let z = 4; z < h; z += 8) box(g, x + .08, y + .08, z, .34, .34, Math.min(8, h - z), (z / 8 | 0) % 2 ? '#d84a3a' : '#f0eeea');
+    });
+    emitters.push({ x: x + .25, y: y + .25, z: h + 1, rate: 150, big: 1 });
+  }
+  function tanks(x, y) {
+    [[.9, .9], [2.6, .9], [.9, 2.5], [2.6, 2.5]].forEach(([dx, dy], i) => add(x + dx, y + dy, 0, x + dx + y + dy + .9, [20, 20, 26, 16], g => {
+      shadowEll(g, x + dx, y + dy, 0, 14, 7); cyl(g, x + dx, y + dy, 0, .78, 13, i % 2 ? '#e8e4dc' : '#d8dde2');
+    }));
+  }
+  function cooling(x, y) {
+    add(x + 1.5, y + 1.5, 0, x + y + 4.5, [34, 34, 50, 26], g => {
+      const [sx, sy] = P(x + 1.5, y + 1.5, 0), ty = P(x + 1.5, y + 1.5, 36)[1];
+      g.fillStyle = 'rgba(0,30,0,.2)'; g.beginPath(); g.ellipse(sx + 3, sy + 2, 32, 12, 0, 0, 7); g.fill();
+      g.fillStyle = '#d9d7d0'; g.beginPath(); g.moveTo(sx - 30, sy); g.quadraticCurveTo(sx - 15, (sy + ty) / 2, sx - 20, ty); g.lineTo(sx + 20, ty); g.quadraticCurveTo(sx + 15, (sy + ty) / 2, sx + 30, sy); g.closePath(); g.fill();
+      g.fillStyle = '#b9b7b0'; g.beginPath(); g.moveTo(sx, sy + 2); g.lineTo(sx + 30, sy); g.quadraticCurveTo(sx + 15, (sy + ty) / 2, sx + 20, ty); g.lineTo(sx, ty); g.closePath(); g.fill();
+      g.fillStyle = '#e9e7e1'; g.beginPath(); g.ellipse(sx, ty, 20, 9, 0, 0, 7); g.fill();
+      g.fillStyle = '#7d7b75'; g.beginPath(); g.ellipse(sx, ty, 16, 7, 0, 0, 7); g.fill();
+    });
+    emitters.push({ x: x + 1.5, y: y + 1.5, z: 38, rate: 90, big: 2.4 });
+  }
+  function warehouse(x, y, w, d) {
+    add(x, y, 0, x + w + y + d, boxExt(w, d, 16), g => {
+      box(g, x, y, 0, w, d, 11, '#8c9aa6', '#a7b3bd');
+      for (let i = .1; i < w; i += .18) line(g, P(x + i, y + d, 0), P(x + i, y + d, 11), 'rgba(0,0,0,.12)');
+      for (let i = 0; i < w; i++) poly(g, [P(x + i + .2, y + d, 0), P(x + i + .8, y + d, 0), P(x + i + .8, y + d, 6), P(x + i + .2, y + d, 6)], '#596570');
+      poly(g, [P(x, y + d, 9), P(x + w, y + d, 9), P(x + w, y + d, 11), P(x, y + d, 11)], '#2f7d6a');
+    });
+  }
+  function containers(x, y, r) {
+    const cols = ['#c8473a', '#2f6fb5', '#d79a36', '#3b8a5a', '#8a4b8a', '#e0e0e0'];
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 4; j++) {
+      const n = 1 + Math.floor(r() * 3), cx = x + .2 + i * 1.2, cy = y + .3 + j * .55, c = cols.map(() => cols[Math.floor(r() * cols.length)]);
+      add(cx, cy, 0, cx + 1 + cy + .45, boxExt(1, .45, 18), g => { for (let k = 0; k < n; k++) box(g, cx, cy, k * 5, 1, .42, 5, c[k]); });
+    }
+  }
+  function station(sx0, sx1, ty, r) {
+    for (let x = sx0; x < sx1; x++) {
+      add(x, ty + .72, 0, x + 1 + ty + 2.1, boxExt(1, 1.3, 16), g => {
+        box(g, x, ty + .72, 0, 1, 1.3, 2.5, '#c9c6bd', '#d9d6cd');
+        line(g, P(x, ty + .76, 2.5), P(x + 1, ty + .76, 2.5), '#f0d24a', 1);
+        if (x % 2 === 0) box(g, x + .45, ty + 1.55, 2.5, .08, .08, 9, '#6a707a');
+        box(g, x, ty + 1.05, 11.5, 1, 1, 1.4, '#c4ccd6', '#e4e9ef');
+      });
+    }
+    const bx = sx0 + 3, by = ty - 4.4, w = sx1 - sx0 - 6, d = 2.2, seed = Math.floor(r() * 1e9);
+    add(bx, by, 0, bx + w + by + d, boxExt(w, d, 34), g => {
+      box(g, bx, by, 0, w, d, 14, '#d8cfc0');
+      wins(g, bx, by, 2, w, d, 10, Math.round(w * 2), 2, rng(seed), '#40617f', '#cfe0ee', .3);
+      gable(g, bx, by, 14, w, d, 9, '#5c7e9c', '#d8cfc0');
+      const c = P(bx + w / 2, by + d, 20); g.fillStyle = '#fff'; g.beginPath(); g.arc(c[0], c[1] - 1, 4, 0, 7); g.fill(); g.strokeStyle = '#333'; g.stroke();
+      line(g, [c[0], c[1] - 1], [c[0], c[1] - 4], '#333'); line(g, [c[0], c[1] - 1], [c[0] + 2, c[1] - 1], '#333');
+    });
+  }
+  function bufferStop(s) {
+    const a = at(s);
+    add(a.x, a.y, 0, a.x + a.y + 1.2, [14, 14, 16, 12], g => box(g, a.x - .15, a.y - .35, 0, .3, .7, 4, '#c8473a'));
+  }
+
+  /* ======================= Welt erzeugen ======================= */
+  function buildWorld() {
+    const r = rng(20261007);
+    objs.length = emitters.length = roadCars.length = turbines.length = 0;
+    const used = new Uint8Array(WX * WY);
+    const free = (x, y, w = 1, d = 1, dist = 1.6) => {
+      for (let i = x; i < x + w; i++) for (let j = y; j < y + d; j++) {
+        if (i < 0 || j < 0 || i >= WX || j >= WY || used[i * WY + j] || td(i, j) < dist || isWater(i + .5, j + .5) || mountH(i + .5, j + .5) > .3 || inStation(i, j)) return false;
+        if (groundOf(i, j).road) return false;
+      }
+      return true;
+    };
+    const frontNear = (x, y, w, d, lim) => { for (let i = x; i < x + w; i++) for (let j = y; j < y + d; j++) if (inFront(i, j) && td(i, j) < lim) return true; return false; };
+    const take = (x, y, w = 1, d = 1) => { for (let i = x; i < x + w; i++) for (let j = y; j < y + d; j++) used[i * WY + j] = 1; };
+
+    station(STATIONS[0].x0, STATIONS[0].x1, 30, r);
+    station(STATIONS[1].x0, STATIONS[1].x1, 28, r);
+    bufferStop(.15); bufferStop(TL - .15);
+
+    // Industrie-Grundstücke
+    for (let gx = 25; gx * 6 < 172; gx++) for (let gy = 0; gy * 5 < WY; gy++) {
+      const x = gx * 6 + 1, y = gy * 5 + 1;
+      let t = Math.floor(hash(gx, gy * 3) * 5);
+      if (biome(x + 2, y + 2) !== 'ind') continue;
+      if ((t === 0 || t === 4) && frontNear(x, y, 4, 4, 9)) t = 2;   // nichts Hohes vor die Strecke
+      if (t === 0 && free(x, y, 4, 3)) { hall(x, y, 3, 2, r); chimney(x + 3.3, y + .2, 44 + Math.floor(r() * 16)); take(x, y, 4, 3); }
+      else if (t === 1 && free(x, y, 4, 4)) { tanks(x, y); take(x, y, 4, 4); }
+      else if (t === 2 && free(x, y, 4, 3)) { warehouse(x, y, 4, 2); take(x, y, 4, 3); }
+      else if (t === 3 && free(x, y, 4, 3)) { containers(x, y, r); take(x, y, 4, 3); }
+      else if (t === 4 && free(x, y, 4, 4)) { cooling(x, y); take(x, y, 4, 4); }
+    }
+    // Bauernhöfe
+    for (let px = 0; px * 6 < WX; px++) for (let py = 0; py * 5 < WY; py++) {
+      const b = biome(px * 6 + 3, py * 5 + 2);
+      if ((b !== 'farm' && b !== 'farm2') || hash(px + 7, py + 3) >= .11) continue;
+      const x = px * 6 + 1, y = py * 5 + 1;
+      if (free(x, y, 3, 2)) { barn(x, y); take(x, y, 3, 2); }
+      if (free(x + 3, y + 2, 1, 1)) { house(x + 3, y + 2, r); take(x + 3, y + 2); }
+    }
+    // Windräder
+    for (let i = 0; i < 9; i++) {
+      const x = 208 + (i % 3) * 7 + Math.floor(r() * 2), y = 6 + Math.floor(i / 3) * 18 + Math.floor(r() * 4);
+      if (td(x, y) > 4 && !isWater(x + .5, y + .5) && !(inFront(x, y) && td(x, y) < 12)) turbines.push({ x: x + .5, y: y + .5, ph: r() * 6.28, sp: .0011 + r() * .0005 });
+    }
+
+    // Kachel für Kachel
+    for (let x = 0; x < WX; x++) for (let y = 0; y < WY; y++) {
+      if (used[x * WY + y]) continue;
+      const b = biome(x, y), t = groundOf(x, y), d = td(x, y);
+      if (t.water || t.road || d < 1.4 || inStation(x, y)) continue;
+      if (mountH(x + .5, y + .5) > .3) continue;
+      const rr = r();
+      if (b === 'city' || b === 'town') {
+        if (t.park) {
+          if (rr < .45) { const px = x + .3 + r() * .4, py = y + .3 + r() * .4; add(px, py, 0, x + y + 1.6, [14, 14, 30, 8], g => leafy(g, px, py, 0, 1), 'leafy1'); }
+          continue;
+        }
+        if (d < 2.2) continue;
+        const cDist = b === 'city' ? Math.min(Math.hypot(x - 56, y - 15), Math.hypot(x - 22, y - 44) * 1.1) : Math.hypot(x - 252, y - 14) * 1.3;
+        const peak = b === 'city' ? 150 : 52;
+        let h = Math.round(14 + peak * Math.exp(-cDist * cDist / (b === 'city' ? 260 : 140)) * (.55 + .7 * r()));
+        if (inFront(x, y) && d < 9) h = Math.min(h, Math.round(8 + (d - 2) * 7));   // freie Sicht auf den Zug
+        if (rr < .07) { if (r() < .6) { const px = x + .5, py = y + .5; add(px, py, 0, x + y + 1.6, [14, 14, 30, 8], g => leafy(g, px, py, 0, .9), 'leafy09'); } continue; }
+        if (h < 26 && rr < .5) shop(x, y, r);
+        else if (h < 20 && rr < .8) house(x, y, r);
+        else tower(x, y, h, r, h < 30);
+      } else if (b === 'sub') {
+        if (d < 2.2) continue;
+        if (rr < .42) house(x, y, r);
+        else if (rr < .62) add(x + .5, y + .5, 0, x + y + 1.6, [14, 14, 30, 8], g => leafy(g, x + .5, y + .5, 0, .9), 'leafy09');
+      } else if (b === 'farm' || b === 'farm2') {
+        if (t.lane && rr < .22) add(x + .5, y + .5, 0, x + y + 1.6, [14, 14, 30, 8], g => leafy(g, x + .5, y + .5, 0, 1, ['#3f7f35', '#559a45', '#79b85c']), 'leafyF');
+      } else if (b === 'forest' || b === 'mtn') {
+        if (rr < (b === 'forest' ? .8 : .28)) {
+          const jx = .25 + r() * .5, jy = .25 + r() * .5, s = .85 + Math.round(r() * 3) * .12, con = r() < (b === 'mtn' ? .85 : .55);
+          const px = x + jx, py = y + jy;
+          add(px, py, 0, x + y + 1.6, [14, 14, 34, 8], con ? g => conifer(g, px, py, 0, s) : g => leafy(g, px, py, 0, s), (con ? 'c' : 'l') + s.toFixed(2));
+        }
+      } else if (b === 'ind') {
+        if (rr < .06) add(x + .5, y + .5, 0, x + y + 1.6, [14, 14, 30, 8], g => leafy(g, x + .5, y + .5, 0, .8), 'leafy08');
+      }
+    }
+
+    // Gebirge als Höhenfeld
+    for (let x = 164; x < 202; x++) for (let y = 0; y < WY; y++) {
+      const c = [mountH(x, y), mountH(x + 1, y), mountH(x + 1, y + 1), mountH(x, y + 1)];
+      const mx = Math.max(...c); if (mx < .6) continue;
+      const avg = (c[0] + c[1] + c[2] + c[3]) / 4;
+      add(x, y, 0, x + y + 2, [HW + 3, HW + 3, mx + 4, 2 * HH + 4], g => {
+        const dzdx = ((c[1] - c[0]) + (c[2] - c[3])) / 2, dzdy = ((c[3] - c[0]) + (c[2] - c[1])) / 2;
+        let nx = -dzdx / 18, ny = -dzdy / 18, nz = 1; const nl = Math.hypot(nx, ny, nz); nx /= nl; ny /= nl; nz /= nl;
+        const f = .5 + .7 * Math.max(0, nx * -.3 + ny * .55 + nz * .78);
+        const steep = Math.hypot(dzdx, dzdy);
+        const col = avg > 64 ? '#f1f3f6' : avg > 44 ? (steep > 14 ? '#a39d92' : '#c7c3bb') : avg > 18 || steep > 12 ? '#9a9283' : avg > 7 ? '#7d9a52' : '#73ad46';
+        poly(g, [P(x, y, c[0]), P(x + 1, y, c[1]), P(x + 1, y + 1, c[2]), P(x, y + 1, c[3])], sh(col, f), true);
+      });
+      if (avg > 2 && avg < 30 && hash(x * 7, y * 11) < .32 && td(x, y) > 1.5) {
+        const z = mountH(x + .5, y + .5), s = .8 + Math.round(hash(y, x) * 3) * .1;
+        add(x + .5, y + .5, z, x + y + 2.5, [14, 14, 34, 8], g => conifer(g, x + .5, y + .5, z, s), 'mc' + s.toFixed(2));
+      }
+    }
+    // Tunnelportale
+    for (const [s, front] of [[sIn, false], [sOut, true]]) {
+      const a = at(s), nx = -Math.sin(a.ang), ny = Math.cos(a.ang);
+      add(a.x, a.y, 0, a.x + a.y + (front ? 2.6 : 1), [40, 40, 40, 30], g => {
+        const L = (o, z) => P(a.x + nx * o, a.y + ny * o, z);
+        poly(g, [L(-1.05, 0), L(1.05, 0), L(1.05, 20), L(-1.05, 20)], '#8d877c', true);
+        poly(g, [L(-1.15, 20), L(1.15, 20), L(1.15, 22.5), L(-1.15, 22.5)], '#a9a397', true);
+        const arch = []; for (let i = 0; i <= 12; i++) { const t = Math.PI * i / 12; arch.push(L(-.62 * Math.cos(t), 8 + 6 * Math.sin(t))); }
+        poly(g, [L(-.62, 0), ...arch, L(.62, 0)], '#1c1c20');
+        for (let i = -1; i <= 1; i += .5) line(g, L(i, 0), L(i, 20), 'rgba(0,0,0,.12)');
+      });
+    }
+    // Brückengeländer
+    for (let s = 0; s < TL; s += .5) {
+      const a = at(s); if (!isWater(a.x, a.y) && !isWater(a.x + .7, a.y) && !isWater(a.x - .7, a.y)) continue;
+      const nx = -Math.sin(a.ang), ny = Math.cos(a.ang), ux = Math.cos(a.ang) * .25, uy = Math.sin(a.ang) * .25;
+      for (const o of [-.62, .62]) {
+        const cx = a.x + nx * o, cy = a.y + ny * o;
+        add(cx, cy, 0, cx + cy + .3 + (o > 0 ? .5 : 0), [16, 16, 20, 12], g => {
+          line(g, P(cx - ux, cy - uy, 9), P(cx + ux, cy + uy, 9), '#3d434b', 2);
+          line(g, P(cx - ux, cy - uy, 0), P(cx + ux, cy + uy, 9), '#59606a', 1);
+          line(g, P(cx, cy, 0), P(cx, cy, 9), '#3d434b', 1);
+        });
+      }
+    }
+    // Autos
+    const CC = ['#d84a3a', '#2f6fb5', '#f0f0f0', '#e0b13a', '#3b8a5a', '#2b2d33'];
+    for (let i = 0; i < 50; i++) {
+      const inTown = i >= 36, xr = inTown ? [230, 289] : [2, 75];
+      if (r() < .5) {
+        const rows = []; for (let y = 1; y < WY; y += 7) if (Math.abs(y - (inTown ? 28 : 30)) > 2) rows.push(y);
+        const y = rows[Math.floor(r() * rows.length)], dir = r() < .5 ? 1 : -1;
+        roadCars.push({ ax: 'x', c: y + (dir > 0 ? .68 : .32), a: xr[0], b: xr[1], dir, sp: .0012 + r() * .0012, ph: r() * 1000, col: CC[Math.floor(r() * 6)] });
+      } else {
+        const cols = []; for (let x = Math.ceil(xr[0] / 7) * 7; x < xr[1]; x += 7) cols.push(x);
+        const x = cols[Math.floor(r() * cols.length)], dir = r() < .5 ? 1 : -1;
+        roadCars.push({ ax: 'y', c: x + (dir > 0 ? .32 : .68), a: 0, b: WY, dir, sp: .0012 + r() * .0012, ph: r() * 1000, col: CC[Math.floor(r() * 6)] });
+      }
+    }
+    for (const o of objs) { o.sx = SX(o.x, o.y); o.sy = SY(o.x, o.y, o.z); }
+  }
+
+  /* ======================= Zug (3D-Kästen) ======================= */
+  function oBox(g, cx, cy, ang, L, Wd, z0, h, col, topCol, deco) {
+    const ux = Math.cos(ang), uy = Math.sin(ang), vx = -uy, vy = ux;
+    const W3 = (a, b) => [cx + ux * a * L / 2 + vx * b * Wd / 2, cy + uy * a * L / 2 + vy * b * Wd / 2];
+    const faces = [[ux, uy, 1, -1, 1, 1, 'front'], [-ux, -uy, -1, 1, -1, -1, 'back'], [vx, vy, -1, 1, 1, 1, 'side'], [-vx, -vy, 1, -1, -1, -1, 'side']];
+    for (const [nx, ny, a1, b1, a2, b2, kind] of faces) {
+      if (nx + ny <= 0.02) continue;
+      const p = W3(a1, b1), qq = W3(a2, b2), f = .8 + .17 * (ny - nx);
+      poly(g, [P(p[0], p[1], z0), P(qq[0], qq[1], z0), P(qq[0], qq[1], z0 + h), P(p[0], p[1], z0 + h)], sh(col, f), true);
+      if (deco) deco(g, kind, (t, z) => P(p[0] + (qq[0] - p[0]) * t, p[1] + (qq[1] - p[1]) * t, z0 + z));
+    }
+    const t = z0 + h;
+    poly(g, [W3(-1, -1), W3(1, -1), W3(1, 1), W3(-1, 1)].map(([x, y]) => P(x, y, t)), topCol || sh(col, 1.1), true);
+    return (a, b, z) => { const w = W3(a, b); return P(w[0], w[1], z); };
+  }
+  const quadT = (Q, t0, t1, z0, z1) => [Q(t0, z0), Q(t1, z0), Q(t1, z1), Q(t0, z1)];
+  const CARS = [{ L: 2.1, loco: true }, { L: 2.35 }, { L: 2.35 }, { L: 2.35 }, { L: 2.35, last: true }];
+  const GAP = .14, TRAIN_LEN = CARS.reduce((a, c) => a + c.L + GAP, 0);
+
+  function drawCar(g, sFront, c) {
+    const f = at(sFront), b = at(sFront - c.L);
+    const cx = (f.x + b.x) / 2, cy = (f.y + b.y) / 2, ang = Math.atan2(f.y - b.y, f.x - b.x), W = .62;
+    const ux = Math.cos(ang), uy = Math.sin(ang), vx = -uy, vy = ux;
+    poly(g, [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, bb]) => P(cx + ux * a * c.L / 2 + vx * bb * .42 + .12, cy + uy * a * c.L / 2 + vy * bb * .42 + .18, 0)), 'rgba(0,25,0,.28)');
+    for (const o of [-.34, .34]) oBox(g, cx + ux * o * c.L, cy + uy * o * c.L, ang, .5, .5, 0, 2.6, '#2a2c31', '#3a3d43');
+    if (c.loco) {
+      const top = oBox(g, cx, cy, ang, c.L, W, 2.4, 9.6, '#cf2f26', '#7f8791', (g, kind, Q) => {
+        if (kind === 'side') {
+          poly(g, quadT(Q, 0, 1, 1.2, 2.4), '#f2f2f2');
+          poly(g, quadT(Q, .06, .2, 4.8, 8), '#1f2a38'); poly(g, quadT(Q, .8, .94, 4.8, 8), '#1f2a38');
+          for (let i = .3; i < .72; i += .06) poly(g, quadT(Q, i, i + .03, 4.4, 7.6), 'rgba(0,0,0,.25)');
+          poly(g, quadT(Q, .23, .27, .2, 8.6), 'rgba(0,0,0,.2)'); poly(g, quadT(Q, .73, .77, .2, 8.6), 'rgba(0,0,0,.2)');
+        } else {
+          poly(g, quadT(Q, .1, .9, 5, 8.6), '#1b2532');
+          poly(g, quadT(Q, .12, .3, 5.4, 6.4), 'rgba(160,200,230,.5)');
+          poly(g, quadT(Q, .12, .24, 1.6, 2.6), '#fff4b0'); poly(g, quadT(Q, .76, .88, 1.6, 2.6), '#fff4b0');
+          poly(g, quadT(Q, 0, 1, 3, 3.8), '#f2f2f2');
+        }
+      });
+      const a1 = top(-.25, 0, 12), b2 = top(.15, 0, 18), c2 = top(.45, 0, 12);
+      line(g, a1, b2, '#30343a', 1); line(g, c2, b2, '#30343a', 1);
+      line(g, top(.05, -.8, 18.5), top(.25, .8, 18.5), '#30343a', 1);
+      box(g, cx - .12 * ux - .11, cy - .12 * uy - .11, 12, .22, .22, 1.2, '#5f666f');
+    } else {
+      oBox(g, cx, cy, ang, c.L, W, 2.4, 9, '#e9ebee', '#a3a9b2', (g, kind, Q) => {
+        if (kind === 'side') {
+          poly(g, quadT(Q, 0, 1, 1, 2.2), '#cf2f26');
+          poly(g, quadT(Q, .1, .9, 4.6, 7.6), '#24364f');
+          for (let i = .1 + .8 / 7; i < .89; i += .8 / 7) poly(g, quadT(Q, i - .012, i + .012, 4.6, 7.6), '#e9ebee');
+          poly(g, quadT(Q, .02, .08, .4, 8), '#b7bdc6'); poly(g, quadT(Q, .92, .98, .4, 8), '#b7bdc6');
+        } else {
+          poly(g, quadT(Q, .3, .7, 0, 8), '#3a3f47');
+          if (c.last && kind === 'back') { poly(g, quadT(Q, .08, .2, 1.4, 2.4), '#ff3b2f'); poly(g, quadT(Q, .8, .92, 1.4, 2.4), '#ff3b2f'); }
+        }
+      });
+      const tp = (a, bb) => P(cx + ux * a + vx * bb, cy + uy * a + vy * bb, 11.6);
+      line(g, tp(-c.L * .35, 0), tp(c.L * .35, 0), 'rgba(255,255,255,.35)');
+    }
+  }
+  function carKey(sFront, c) { const f = at(sFront), b = at(sFront - c.L); return Math.max(f.x + f.y, b.x + b.y) + .45; }
+
+  /* ======================= Rendering ======================= */
+  const ctx = world.getContext('2d');
+  const lc = document.createElement('canvas'), lx = lc.getContext('2d');
+  let PX = 2, W = 0, H = 0, ready = false, camX = 0, camY = 0, camInit = false;
+  const cache = new Map(), smoke = [];
+
+  function sprite(o) {
+    let c = cache.get(o.ck); if (c) return c;
+    const [l, rr, u, d] = o.ext;
+    c = document.createElement('canvas'); c.width = Math.ceil(l + rr); c.height = Math.ceil(u + d);
+    OX = l - o.sx; OY = u - o.sy;
+    o.draw(c.getContext('2d'));
+    cache.set(o.ck, c); return c;
+  }
+  function headS() { const s0 = TRAIN_LEN + .3, s1 = TL - .6; return s0 + (s1 - s0) * (1 - now() / total); }
+  const tunnelHidden = sMid => sIn > 0 && sMid > sIn + .6 && sMid < sOut - .9;
+
+  function resize() {
+    const vw = innerWidth || document.documentElement.clientWidth, vh = innerHeight || document.documentElement.clientHeight;
+    if (vw < 50 || vh < 50) return false;
+    const dpr = devicePixelRatio || 1;
+    PX = Math.max(2, Math.round(vw / 640));
+    W = Math.ceil(vw / PX); H = Math.ceil(vh / PX);
+    world.width = Math.round(vw * dpr); world.height = Math.round(vh * dpr);
+    lc.width = W; lc.height = H;
+    return true;
+  }
+  function init() {
+    if (!resize()) { setTimeout(init, 200); return; }
+    if (!ready) {
+      try { buildWorld(); buildGround(); buildRouteBar(); ready = true; }
+      catch (err) { console.warn('Welt konnte nicht erzeugt werden:', err); setTimeout(init, 600); }
+    }
+  }
+  function buildRouteBar() {
+    const segs = [['city', '#9aa3ad'], ['sub', '#8fc76a'], ['farm', '#d9c25a'], ['forest', '#3f7f45'], ['ind', '#b18a5a'], ['mtn', '#c7c3bb'], ['farm2', '#b9c96a'], ['town', '#9aa3ad']];
+    const len = {};
+    for (let i = 0; i < TN; i += 4) { const b = biome(TP[i][0], 29); len[b] = (len[b] || 0) + 1; }
+    const tot = Object.values(len).reduce((a, b) => a + b, 0), tr = $('routeTrack');
+    tr.querySelectorAll('span').forEach(s => s.remove());
+    segs.forEach(([b, c]) => { if (!len[b]) return; const s = document.createElement('span'); s.style.width = (len[b] / tot * 100) + '%'; s.style.background = c; tr.insertBefore(s, routeDone); });
+  }
+
+  let lastT = performance.now(), lastEmit = 0;
+  function frame(t) {
+    const dt = Math.min(60, t - lastT); lastT = t;
+    const ms = now();
+    if (endAt && ms <= 0) finish();
+    const txt = fmt(ms), frac = ms / total;
+    if (txt !== lastTxt) { lastTxt = txt; timeEl.innerHTML = digitsHTML(txt); clockDigits.innerHTML = digitsHTML(txt); tag.textContent = txt; }
+    fillEl.style.transform = `scaleX(${frac})`;
+    clockBar.style.transform = `scaleX(${frac})`;
+
+    if (view === 'zug' && ready) {
+      const prog = 1 - frac;
+      routeDone.style.width = (prog * 100) + '%'; routeLoco.style.left = (prog * 100) + '%';
+      const head = headS(), hp = at(head - CARS[0].L / 2);
+      const tx = SX(hp.x, hp.y), ty = SY(hp.x, hp.y, 6) + H * .06;
+      if (!camInit) { camX = tx; camY = ty; camInit = true; }
+      const k = 1 - Math.pow(.9, dt / 16);
+      camX += (tx - camX) * k; camY += (ty - camY) * k;
+      const offX = Math.round(W / 2 - camX), offY = Math.round(H / 2 - camY);
+
+      lx.imageSmoothingEnabled = false;
+      lx.fillStyle = '#6fa848'; lx.fillRect(0, 0, W, H);
+      lx.drawImage(ground, -offX, -offY, W, H, 0, 0, W, H);
+
+      const list = [];
+      for (const o of objs) {
+        const sx = o.sx + offX, sy = o.sy + offY, e = o.ext;
+        if (sx + e[1] < 0 || sx - e[0] > W || sy + e[3] < 0 || sy - e[2] > H) continue;
+        list.push({ k: o.k, o, sx, sy });
+      }
+      let s = head;
+      CARS.forEach(c => { const mid = s - c.L / 2, sF = s; if (!tunnelHidden(mid)) list.push({ k: carKey(sF, c), dyn: g => drawCar(g, sF, c) }); s -= c.L + GAP; });
+      for (const c of roadCars) {
+        const len = c.b - c.a, p = ((t * c.sp + c.ph) % len + len) % len, pos = c.dir > 0 ? c.a + p : c.b - p;
+        const x = c.ax === 'x' ? pos : c.c, y = c.ax === 'x' ? c.c : pos;
+        if (td(Math.floor(x), Math.floor(y)) < 1.2 || inStation(Math.floor(x), Math.floor(y))) continue;
+        const sx = SX(x, y) + offX, sy = SY(x, y) + offY; if (sx < -20 || sx > W + 20 || sy < -20 || sy > H + 20) continue;
+        const ang = c.ax === 'x' ? (c.dir > 0 ? 0 : Math.PI) : (c.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
+        list.push({ k: x + y + .5, dyn: g => { oBox(g, x, y, ang, .5, .26, .6, 2.6, c.col); oBox(g, x - Math.cos(ang) * .04, y - Math.sin(ang) * .04, ang, .26, .22, 3.2, 1.6, '#3a4656', '#4a5a6e'); } });
+      }
+      for (const w of turbines) {
+        const sx = SX(w.x, w.y) + offX, sy = SY(w.x, w.y) + offY; if (sx < -60 || sx > W + 60 || sy < -10 || sy > H + 90) continue;
+        list.push({ k: w.x + w.y + 1, dyn: g => {
+          shadowEll(g, w.x, w.y, 0, 6, 3);
+          const b = P(w.x, w.y, 0), top = P(w.x, w.y, 62);
+          g.fillStyle = '#f1f3f5'; g.beginPath(); g.moveTo(b[0] - 2, b[1]); g.lineTo(b[0] + 2, b[1]); g.lineTo(top[0] + 1, top[1]); g.lineTo(top[0] - 1, top[1]); g.closePath(); g.fill();
+          g.fillStyle = '#c9cdd2'; g.fillRect(b[0], top[1], 1, b[1] - top[1]);
+          box(g, w.x - .12, w.y - .1, 61, .32, .2, 3, '#e6e9ec');
+          const hub = P(w.x + .22, w.y + .1, 62.5), a = t * w.sp + w.ph;
+          for (let i = 0; i < 3; i++) { const an = a + i * 2.094; line(g, hub, [hub[0] + Math.cos(an) * 20, hub[1] + Math.sin(an) * 20], '#f7f8f9', 2); }
+          g.fillStyle = '#9aa0a8'; g.fillRect(hub[0] - 1, hub[1] - 1, 2, 2);
+        } });
+      }
+      list.sort((a, b) => a.k - b.k);
+      for (const it of list) {
+        if (it.dyn) { OX = offX; OY = offY; it.dyn(lx); continue; }
+        const c = sprite(it.o);
+        lx.drawImage(c, Math.round(it.sx - it.o.ext[0]), Math.round(it.sy - it.o.ext[2]));
+      }
+
+      // Rauch
+      if (t - lastEmit > 60) {
+        lastEmit = t;
+        for (const e of emitters) {
+          const sx = SX(e.x, e.y) + offX, sy = SY(e.x, e.y, e.z) + offY;
+          if (sx < -80 || sx > W + 80 || sy < -120 || sy > H + 40 || Math.random() * e.rate > 60) continue;
+          smoke.push({ x: SX(e.x, e.y), y: SY(e.x, e.y, e.z), r: 1.5 * e.big, vx: .008 + Math.random() * .006, vy: -.018 - Math.random() * .01, life: 1, big: e.big });
+        }
+      }
+      for (let i = smoke.length - 1; i >= 0; i--) {
+        const p = smoke[i]; p.x += p.vx * dt; p.y += p.vy * dt; p.r += .0045 * dt * p.big; p.life -= .00028 * dt;
+        if (p.life <= 0) { smoke.splice(i, 1); continue; }
+        const R = Math.max(1, Math.round(p.r)), cx = Math.round(p.x + offX), cy = Math.round(p.y + offY);
+        if (cx < -R || cx > W + R || cy < -R || cy > H + R) continue;
+        lx.fillStyle = `rgba(245,245,245,${(Math.ceil(p.life * 5) / 5 * .7).toFixed(2)})`;
+        for (let dy = -R; dy <= R; dy++) { const w = Math.round(Math.sqrt(R * R - dy * dy)); lx.fillRect(cx - w, cy + dy, 2 * w + 1, 1); }
+      }
+
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(lc, 0, 0, W, H, 0, 0, W * PX * (devicePixelRatio || 1), H * PX * (devicePixelRatio || 1));
+
+      const tagP = [SX(hp.x, hp.y) + offX, SY(hp.x, hp.y, 30) + offY];
+      tag.style.transform = `translate(${tagP[0] * PX}px, ${tagP[1] * PX}px) translate(-50%, -100%)`;
+    }
+    requestAnimationFrame(frame);
+  }
+
+  let rt;
+  addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { resize(); if (!ready) init(); }, 120); });
+  setView(view);
+  init();
+  if (q.get('auto') === '1') start();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
