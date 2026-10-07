@@ -1,6 +1,6 @@
 # Countdown
 
-Präsentations-Timer im isometrischen SimCity-Look: Ein Zug fährt vom Hauptbahnhof durch Vorstadt, Felder, Wald, Industrie, einen Bergtunnel und über den Fluss bis zum Ziel. Wenn er ankommt, ist die Zeit um.
+Präsentations-Timer im isometrischen SimCity-Look: Ein Zug fährt vom Hauptbahnhof durch Vorstadt, Felder, Wald, Industrie, einen Bergtunnel und über den Fluss bis zum Ziel. Wenn er ankommt, ist die Zeit um. Die Kamera folgt dem Zug; im Tunnel bleibt er als Röntgenbild sichtbar.
 
 **Live:** https://derkellerpotato.github.io/countdown/?min=5
 
@@ -9,6 +9,9 @@ Präsentations-Timer im isometrischen SimCity-Look: Ein Zug fährt vom Hauptbahn
 | Aktion | Wirkung |
 |---|---|
 | Klick | Start (schaltet in den Vollbildmodus) / Pause |
+| Uhr oben rechts anklicken (oder E) | Zeit einstellen |
+| Streckenbalken unten ziehen / Mausrad | vor- und zurückspulen |
+| ← / → | 10 s spulen (mit Umschalt: 1 min) |
 | Leertaste | Start / Pause |
 | R | Neustart |
 | Z | Ansicht wechseln: Zug → Balken → Zahlen |

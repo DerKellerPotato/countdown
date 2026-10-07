@@ -40,13 +40,15 @@
     font-size: clamp(34px, 5vw, 110px); line-height: 1;
     box-shadow: 0 6px 24px rgba(0,0,0,.3);
   }
+  #clock { cursor: pointer; transition: transform .15s; }
+  #clock:hover { transform: scale(1.03); }
   #clock .bar { height: .06em; margin-top: .12em; border-radius: 1em; background: rgba(255,255,255,.25); overflow: hidden; }
   #clock .bar i { display: block; height: 100%; width: 100%; background: var(--fg); transform-origin: left; }
   #tag {
     position: fixed; left: 0; top: 0;
     background: var(--bg); color: var(--fg); font-size: clamp(13px, 1.3vw, 22px);
     padding: .25em .55em; border-radius: 8px; white-space: nowrap; pointer-events: none;
-    box-shadow: 0 3px 10px rgba(0,0,0,.3);
+    box-shadow: 0 3px 10px rgba(0,0,0,.3); font-variant-numeric: tabular-nums; min-width: 3.6em; text-align: center;
   }
   #tag::after {
     content: ""; position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%);
@@ -58,8 +60,11 @@
     background: color-mix(in srgb, var(--bg) 92%, transparent); color: var(--fg);
     border-radius: 12px; padding: .7em 1.4em .9em; box-shadow: 0 6px 20px rgba(0,0,0,.3);
   }
+  #route { cursor: ew-resize; touch-action: none; }
+  #route .labels span:nth-child(2) { opacity: .75; font-weight: 400; }
   #route .labels { display: flex; justify-content: space-between; margin-bottom: .5em; letter-spacing: .02em; }
-  #route .track { position: relative; height: .8em; display: flex; }
+  #route .track { position: relative; height: .8em; display: flex; transition: height .15s; }
+  #route:hover .track, #route.scrub .track { height: 1.1em; }
   #route .track span { height: 100%; }
   #route .track span:first-child { border-radius: 1em 0 0 1em; }
   #route .track span:nth-last-child(3) { border-radius: 0 1em 1em 0; }
@@ -70,6 +75,34 @@
     box-shadow: 0 2px 6px rgba(0,0,0,.35);
   }
 
+  #editor {
+    position: fixed; top: calc(3vh + clamp(34px, 5vw, 110px) * 1.75); right: 3vw; z-index: 5;
+    background: var(--bg); color: var(--fg); border-radius: 16px; padding: 18px 20px 16px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.35); font-size: 16px; cursor: default; width: 330px; max-width: calc(100vw - 32px);
+  }
+  body:not(.zug) #editor { top: 3vh; }
+  #editor .ed-row { display: flex; align-items: center; justify-content: center; gap: 10px; }
+  #editor .ed-field { display: grid; justify-items: center; gap: 4px; }
+  #editor input {
+    width: 2.6em; font: inherit; font-size: 46px; font-weight: 700; text-align: center; line-height: 1.1;
+    background: rgba(255,255,255,.1); color: var(--fg); border: 2px solid rgba(255,255,255,.25); border-radius: 10px; padding: 2px 0;
+  }
+  #editor input:focus { outline: none; border-color: var(--fg); background: rgba(255,255,255,.16); }
+  #editor .ed-colon { font-size: 46px; padding-bottom: 22px; }
+  #editor label { font-size: 12px; font-weight: 400; letter-spacing: .08em; text-transform: uppercase; opacity: .75; }
+  #editor button {
+    font: inherit; font-weight: 700; color: var(--fg); background: rgba(255,255,255,.12); border: 0; border-radius: 8px; cursor: pointer;
+  }
+  #editor button:hover { background: rgba(255,255,255,.24); }
+  #editor button:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+  #editor .step { width: 100%; padding: 2px 0; font-size: 13px; }
+  #editor .ed-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 14px 0 12px; }
+  #editor .ed-presets button { padding: 7px 0; font-size: 14px; }
+  #editor .ed-presets button::after { content: ' min'; font-weight: 400; opacity: .7; font-size: 12px; }
+  #editor .ed-actions { display: flex; gap: 8px; }
+  #editor .ed-actions button { flex: 1; padding: 9px 0; font-size: 15px; }
+  #editor .ed-actions .primary { background: var(--fg); color: var(--bg); }
+  #editor .ed-actions .primary:hover { background: rgba(255,255,255,.85); }
   #hint {
     position: fixed; left: 50%; bottom: calc(3vh + 6.2em); transform: translateX(-50%);
     font-size: clamp(13px, 1.3vw, 20px); font-weight: 400; letter-spacing: .03em;
@@ -89,14 +122,23 @@
 <canvas id="world"></canvas>
 <div id="tag"></div>
 <div id="clock"><div class="digits" id="clockDigits"></div><div class="bar"><i id="clockBar"></i></div></div>
-<div id="route"><div class="labels"><span>Hauptbahnhof</span><span>Ziel</span></div><div class="track" id="routeTrack"><div class="done" id="routeDone"></div><div class="loco" id="routeLoco"></div></div></div>
-<div id="hint">Klicken zum Starten (Vollbild) · Leertaste: Pause · R: Neustart · Z: Ansicht wechseln</div>
+<div id="route"><div class="labels"><span>Hauptbahnhof</span><span>ziehen zum Spulen</span><span>Ziel</span></div><div class="track" id="routeTrack"><div class="done" id="routeDone"></div><div class="loco" id="routeLoco"></div></div></div>
+<div id="editor" hidden>
+  <div class="ed-row">
+    <div class="ed-field"><button class="step" data-d="60" aria-label="Eine Minute mehr">▲</button><input id="edMin" inputmode="numeric" maxlength="3" aria-label="Minuten"><button class="step" data-d="-60" aria-label="Eine Minute weniger">▼</button><label for="edMin">Min</label></div>
+    <span class="ed-colon">:</span>
+    <div class="ed-field"><button class="step" data-d="5" aria-label="Fünf Sekunden mehr">▲</button><input id="edSek" inputmode="numeric" maxlength="2" aria-label="Sekunden"><button class="step" data-d="-5" aria-label="Fünf Sekunden weniger">▼</button><label for="edSek">Sek</label></div>
+  </div>
+  <div class="ed-presets"><button data-m="1">1</button><button data-m="2">2</button><button data-m="3">3</button><button data-m="5">5</button><button data-m="10">10</button><button data-m="15">15</button><button data-m="20">20</button><button data-m="30">30</button></div>
+  <div class="ed-actions"><button id="edCancel">Abbrechen</button><button id="edOk" class="primary">Übernehmen</button></div>
+</div>
+<div id="hint">Klick: Start/Pause · Uhr anklicken: Zeit einstellen · Balken ziehen: spulen · Z: Ansicht</div>
 <script>
 (() => {
   /* ======================= Parameter ======================= */
   const q = new URLSearchParams(location.search);
   const num = (k, d) => { const v = parseFloat(q.get(k)); return isFinite(v) && v > 0 ? v : d; };
-  const total = Math.round((num('min', 0) * 60 + num('sek', 0)) * 1000) || 5 * 60 * 1000;
+  let total = Math.round((num('min', 0) * 60 + num('sek', 0)) * 1000) || 5 * 60 * 1000;
   const hex = k => { const v = (q.get(k) || '').replace('#', ''); return /^[0-9a-fA-F]{6}$/.test(v) ? '#' + v : null; };
   const rs = document.documentElement.style;
   if (hex('bg')) rs.setProperty('--bg', hex('bg'));
@@ -133,11 +175,81 @@
     clock.hidden = v !== 'zug' || !bigClock;
     route.hidden = v !== 'zug' || !showRoute;
   }
-  document.addEventListener('click', () => { fullscreen(); endAt ? pause() : (remaining <= 0 ? reset() : start()); });
+  function toggleRun() { endAt ? pause() : (remaining <= 0 ? reset() : start()); }
+  function setRemaining(rem) {
+    rem = Math.max(0, Math.min(total, rem));
+    if (rem <= 0) { remaining = 0; endAt = null; finish(); return; }
+    remaining = rem;
+    if (endAt) endAt = performance.now() + rem;
+    if (document.body.classList.contains('done')) { document.body.classList.remove('done'); hint.textContent = HINT; }
+  }
+  function setDuration(ms) {
+    total = ms; endAt = null; remaining = total; lastTxt = '';
+    document.body.classList.remove('running', 'done'); hint.textContent = HINT;
+    try {
+      const u = new URL(location.href), sec = Math.round(ms / 1000);
+      u.searchParams.set('min', Math.floor(sec / 60));
+      if (sec % 60) u.searchParams.set('sek', sec % 60); else u.searchParams.delete('sek');
+      history.replaceState(null, '', u);
+    } catch (e) {}
+  }
+
+  /* ---- Zeit einstellen ---- */
+  const editor = $('editor'), edMin = $('edMin'), edSek = $('edSek');
+  const readEd = () => ((parseInt(edMin.value, 10) || 0) * 60 + (parseInt(edSek.value, 10) || 0)) * 1000;
+  function writeEd(ms) {
+    const sec = Math.max(1, Math.min(999 * 60 + 59, Math.round(ms / 1000)));
+    edMin.value = Math.floor(sec / 60); edSek.value = String(sec % 60).padStart(2, '0');
+  }
+  function openEditor() { writeEd(total); editor.hidden = false; edMin.focus(); edMin.select(); }
+  function closeEditor() { editor.hidden = true; }
+  function applyEditor() { const ms = readEd(); if (ms >= 1000) { setDuration(ms); closeEditor(); } else { edSek.focus(); } }
+  editor.addEventListener('click', e => {
+    e.stopPropagation();
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.d) writeEd(readEd() + +b.dataset.d * 1000);
+    else if (b.dataset.m) { writeEd(+b.dataset.m * 60000); applyEditor(); }
+    else if (b.id === 'edOk') applyEditor();
+    else if (b.id === 'edCancel') closeEditor();
+  });
+  editor.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); applyEditor(); }
+    else if (e.key === 'Escape') closeEditor();
+    else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.target.tagName === 'INPUT') {
+      e.preventDefault(); const step = (e.target === edMin ? 60 : 1) * (e.key === 'ArrowUp' ? 1 : -1);
+      writeEd(readEd() + step * 1000); e.target.select();
+    }
+  });
+  editor.addEventListener('wheel', e => {
+    if (e.target.tagName !== 'INPUT') return;
+    e.preventDefault(); writeEd(readEd() + (e.target === edMin ? 60 : 5) * (e.deltaY < 0 ? 1 : -1) * 1000);
+  }, { passive: false });
+  [edMin, edSek].forEach(i => i.addEventListener('input', () => { i.value = i.value.replace(/\D/g, ''); }));
+  clock.addEventListener('click', e => { e.stopPropagation(); editor.hidden ? openEditor() : closeEditor(); });
+
+  /* ---- Spulen mit dem Streckenbalken ---- */
+  const routeTrack = $('routeTrack');
+  let scrubbing = false;
+  const scrubTo = e => { const r = routeTrack.getBoundingClientRect(); setRemaining(total * (1 - Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)))); };
+  route.addEventListener('pointerdown', e => { e.stopPropagation(); scrubbing = true; route.classList.add('scrub'); try { route.setPointerCapture(e.pointerId); } catch (_) {} scrubTo(e); });
+  route.addEventListener('pointermove', e => { if (scrubbing) scrubTo(e); });
+  const endScrub = () => { scrubbing = false; route.classList.remove('scrub'); };
+  route.addEventListener('pointerup', endScrub); route.addEventListener('pointercancel', endScrub);
+  route.addEventListener('click', e => e.stopPropagation());
+  route.addEventListener('wheel', e => { e.preventDefault(); setRemaining(now() + (e.deltaY < 0 ? 5000 : -5000)); }, { passive: false });
+
+  document.addEventListener('click', () => {
+    if (!editor.hidden) { closeEditor(); return; }
+    fullscreen(); toggleRun();
+  });
   document.addEventListener('keydown', e => {
-    if (e.code === 'Space') { e.preventDefault(); endAt ? pause() : (remaining <= 0 ? reset() : start()); }
+    if (e.target && e.target.closest && e.target.closest('#editor')) return;
+    if (e.code === 'Space') { e.preventDefault(); toggleRun(); }
     else if (e.key === 'r' || e.key === 'R') reset();
     else if (e.key === 'f' || e.key === 'F') fullscreen();
+    else if (e.key === 'e' || e.key === 'E') { e.preventDefault(); openEditor(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); setRemaining(now() + (e.key === 'ArrowLeft' ? 1 : -1) * (e.shiftKey ? 60000 : 10000)); }
     else if (e.key === 'z' || e.key === 'Z') setView(VIEWS[(VIEWS.indexOf(view) + 1) % VIEWS.length]);
   });
 
@@ -146,7 +258,8 @@
   let OX = 0, OY = 0;
   const SX = (x, y) => (x - y) * HW + ORX;
   const SY = (x, y, z = 0) => (x + y) * HH - z + ORY;
-  const P = (x, y, z = 0) => [Math.round(SX(x, y) + OX), Math.round(SY(x, y, z) + OY)];
+  let ROUND = true;
+  const P = (x, y, z = 0) => ROUND ? [Math.round(SX(x, y) + OX), Math.round(SY(x, y, z) + OY)] : [SX(x, y) + OX, SY(x, y, z) + OY];
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
   const _sh = new Map();
@@ -252,7 +365,7 @@
   const isWater = (x, y) => Math.abs(x - riverX(y)) < 1.7 || Math.hypot(x - 138, (y - 11) * 1.2) < 3.2;
   const PEAKS = [[176, 18, 72, 9], [184, 21, 96, 10], [191, 15, 80, 9], [179, 41, 86, 10], [188, 44, 70, 9],
                  [194, 38, 58, 7], [178, 7, 62, 8], [187, 6, 78, 8], [196, 21, 52, 7]];
-  function mountH(x, y) {
+  function rawH(x, y) {
     if (x < 165 || x > 201) return 0;
     let h = 0;
     for (const [px, py, ph, pr] of PEAKS) { const d = Math.hypot(x - px, (y - py) * .9); h = Math.max(h, ph * (1 - d / pr)); }
@@ -262,22 +375,33 @@
   }
   const biome = (x, y) => { const b = x + 2.5 * Math.sin(y * .4); return b < 76 ? 'city' : b < 100 ? 'sub' : b < 128 ? 'farm' : b < 150 ? 'forest' : b < 172 ? 'ind' : b < 201 ? 'mtn' : b < 230 ? 'farm2' : 'town'; };
 
-  // Abstand jeder Kachel zur Strecke + ob sie davor (Richtung Betrachter) liegt
-  const TD = new Float32Array(WX * WY).fill(99), TF = new Float32Array(WX * WY);
+  // Abstand jeder Kachel zur Strecke, nächster Streckenpunkt, und ob sie davor (Richtung Betrachter) liegt
+  const TD = new Float32Array(WX * WY).fill(99), TF = new Float32Array(WX * WY), TS = new Float32Array(WX * WY);
   for (let i = 0; i < TN; i += 2) {
     const [px, py] = TP[i];
     for (let x = Math.floor(px) - 8; x <= px + 8; x++) for (let y = Math.floor(py) - 8; y <= py + 8; y++) {
       if (x < 0 || y < 0 || x >= WX || y >= WY) continue;
       const d = Math.hypot(x + .5 - px, y + .5 - py), k = x * WY + y;
-      if (d < TD[k]) { TD[k] = d; TF[k] = (x + y + 1) - (px + py); }
+      if (d < TD[k]) { TD[k] = d; TF[k] = (x + y + 1) - (px + py); TS[k] = i * STEP; }
     }
   }
   const td = (x, y) => (x < 0 || y < 0 || x >= WX || y >= WY) ? 99 : TD[x * WY + y];
   const inFront = (x, y) => (x < 0 || y < 0 || x >= WX || y >= WY) ? false : TF[x * WY + y] > 0;
 
-  // Tunnelbereich auf der Strecke
+  // Tunnel: dort, wo der Berg über der Strecke mindestens 18 hoch ist; davor/danach ein Einschnitt
   let sIn = -1, sOut = -1;
-  for (let i = 0; i < TN; i++) if (mountH(TP[i][0], TP[i][1]) > 8) { if (sIn < 0) sIn = i * STEP; sOut = i * STEP; }
+  for (let i = 0; i < TN; i++) if (rawH(TP[i][0], TP[i][1]) > 18) { if (sIn < 0) sIn = i * STEP; sOut = i * STEP; }
+  const inTunnel = sv => sIn >= 0 && sv > sIn && sv < sOut;
+  const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+  function mountH(x, y) {
+    const h = rawH(x, y); if (!h) return 0;
+    const ix = Math.floor(x), iy = Math.floor(y);
+    if (ix < 0 || iy < 0 || ix >= WX || iy >= WY) return h;
+    const k = ix * WY + iy, d = TD[k];
+    if (d > 3.4) return h;
+    if (inTunnel(TS[k])) return h;
+    return h * smooth(1.3, 3.4, d);          // Bahneinschnitt
+  }
 
   const STATIONS = [{ x0: 35, x1: 57, y: 30 }, { x0: 238, x1: 258, y: 28 }];
   const inStation = (x, y) => STATIONS.some(s => x >= s.x0 && x <= s.x1 && y >= s.y - 5 && y <= s.y + 4);
@@ -343,18 +467,18 @@
     const off = (s, o) => { const a = at(s); return [a.x - Math.sin(a.ang) * o, a.y + Math.cos(a.ang) * o]; };
     const wet = s => { const a = at(s); return isWater(a.x, a.y) || isWater(a.x + .8, a.y) || isWater(a.x - .8, a.y); };
     for (let s = 0; s < TL - .25; s += .25) {
-      if (mountH(...off(s, 0)) > 3) continue;
+      if (inTunnel(s + .12)) continue;
       const w = wet(s) ? .62 : .5, col = wet(s) ? '#555a62' : '#958f81';
       poly(g, [P(...off(s, -w)), P(...off(s, w)), P(...off(s + .26, w)), P(...off(s + .26, -w))], col, true);
     }
     for (let s = .1; s < TL; s += .32) {
-      if (mountH(...off(s, 0)) > 3) continue;
+      if (inTunnel(s)) continue;
       line(g, P(...off(s, -.37)), P(...off(s, .37)), '#5d4330', 2);
     }
     for (const o of [-.19, .19]) {
       g.beginPath(); let first = true;
       for (let s = 0; s < TL; s += .2) {
-        if (mountH(...off(s, 0)) > 3) { first = true; continue; }
+        if (inTunnel(s)) { first = true; continue; }
         const p = P(...off(s, o));
         first ? g.moveTo(p[0], p[1]) : g.lineTo(p[0], p[1]); first = false;
       }
@@ -364,6 +488,7 @@
 
   /* ======================= Objekte ======================= */
   const objs = [], emitters = [], roadCars = [], turbines = [];
+  let PORTAL_KEY = -1, PORTAL_PTS = null;
   function add(x, y, z, k, ext, draw, ck) { const o = { x, y, z, k, ext, draw }; o.ck = ck || o; objs.push(o); return o; }
   const boxExt = (w, d, h) => [d * HW + 4, w * HW + 4, h + 6, (w + d) * HH + 6];
 
@@ -606,16 +731,43 @@
         add(x + .5, y + .5, z, x + y + 2.5, [14, 14, 34, 8], g => conifer(g, x + .5, y + .5, z, s), 'mc' + s.toFixed(2));
       }
     }
-    // Tunnelportale
-    for (const [s, front] of [[sIn, false], [sOut, true]]) {
-      const a = at(s), nx = -Math.sin(a.ang), ny = Math.cos(a.ang);
-      add(a.x, a.y, 0, a.x + a.y + (front ? 2.6 : 1), [40, 40, 40, 30], g => {
-        const L = (o, z) => P(a.x + nx * o, a.y + ny * o, z);
-        poly(g, [L(-1.05, 0), L(1.05, 0), L(1.05, 20), L(-1.05, 20)], '#8d877c', true);
-        poly(g, [L(-1.15, 20), L(1.15, 20), L(1.15, 22.5), L(-1.15, 22.5)], '#a9a397', true);
-        const arch = []; for (let i = 0; i <= 12; i++) { const t = Math.PI * i / 12; arch.push(L(-.62 * Math.cos(t), 8 + 6 * Math.sin(t))); }
-        poly(g, [L(-.62, 0), ...arch, L(.62, 0)], '#1c1c20');
-        for (let i = -1; i <= 1; i += .5) line(g, L(i, 0), L(i, 20), 'rgba(0,0,0,.12)');
+    // Tunnelportale (nur die zum Betrachter gewandte Seite ist sichtbar)
+    for (const [s, dir] of [[sIn, -1], [sOut, 1]]) {
+      if (s < 0) continue;
+      const a = at(s), tx = Math.cos(a.ang) * dir, ty = Math.sin(a.ang) * dir, nx = -Math.sin(a.ang), ny = Math.cos(a.ang);
+      if (tx + ty <= 0) continue;
+      PORTAL_KEY = a.x + a.y + 1.5;
+      { const W3 = (o, z, back = 0) => [a.x + nx * o - tx * back, a.y + ny * o - ty * back, z];
+        PORTAL_PTS = [W3(-2.3, 0, 1.1), W3(-1.4, 0), W3(1.4, 0), W3(2.3, 0, 1.1), W3(2.3, 8.2, 1.1), W3(1.4, 20.5, .45), W3(-1.4, 20.5, .45), W3(-2.3, 8.2, 1.1), W3(-1.4, 20.5), W3(1.4, 20.5)]; }
+      add(a.x, a.y, 0, PORTAL_KEY, [70, 70, 60, 40], g => {
+        const L = (o, z, back = 0) => P(a.x + nx * o - tx * back, a.y + ny * o - ty * back, z);
+        const stone = '#9d968b', dark = '#7f786e', light = '#bdb6aa';
+        // Flügelmauern, schräg nach hinten
+        for (const sgn of [-1, 1]) {
+          poly(g, [L(sgn * 1.2, 0), L(sgn * 2.3, 0, 1.1), L(sgn * 2.3, 7, 1.1), L(sgn * 1.2, 16)], sgn * (nx + ny) > 0 ? sh(stone, .82) : sh(stone, 1), true);
+          poly(g, [L(sgn * 1.2, 16), L(sgn * 2.3, 7, 1.1), L(sgn * 2.3, 8.2, 1.1), L(sgn * 1.2, 17.4)], light, true);
+        }
+        // Stirnwand
+        poly(g, [L(-1.25, 0), L(1.25, 0), L(1.25, 18), L(-1.25, 18)], stone, true);
+        g.save(); g.beginPath(); [L(-1.25, 0), L(1.25, 0), L(1.25, 18), L(-1.25, 18)].forEach((p, i) => i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1])); g.closePath(); g.clip();
+        for (let z = 3, row = 0; z < 18; z += 3, row++) {
+          line(g, L(-1.3, z), L(1.3, z), 'rgba(0,0,0,.13)');
+          for (let o = -1.25 + (row % 2) * .25; o < 1.25; o += .5) line(g, L(o, z - 3), L(o, z), 'rgba(0,0,0,.1)');
+        }
+        g.restore();
+        // Bogen: Ring aus Keilsteinen, Öffnung, Tiefe
+        const R1 = .84, R0 = .64, ZC = 7.5, HZ = 7.2;
+        const ring = [], hole = [], inner = [];
+        for (let i = 0; i <= 16; i++) { const t = Math.PI * i / 16, c = -Math.cos(t), sn = Math.sin(t); ring.push(L(R1 * c, ZC + HZ * 1.27 * sn)); hole.push(L(R0 * c, ZC + HZ * sn)); inner.push(L(R0 * c * .78 + .08, ZC + HZ * sn * .8, .8)); }
+        poly(g, [L(-R1, 0), ...ring, L(R1, 0)], light, true);
+        for (let i = 1; i < 16; i += 2) { const t = Math.PI * i / 16; line(g, L(-R0 * Math.cos(t), ZC + HZ * Math.sin(t)), L(-R1 * Math.cos(t), ZC + HZ * 1.27 * Math.sin(t)), 'rgba(0,0,0,.18)'); }
+        poly(g, [L(-R0, 0), ...hole, L(R0, 0)], '#1a1b1f');
+        poly(g, [L(-R0 * .78 + .08, 0, .8), ...inner, L(R0 * .78 + .08, 0, .8)], '#0c0c0f');
+        poly(g, [L(-R0, 0), L(-R0 * .78 + .08, 0, .8), L(R0 * .78 + .08, 0, .8), L(R0, 0)], '#3c3a37');
+        // Schlussstein + Gesims
+        poly(g, [L(-.12, ZC + HZ - .2), L(.12, ZC + HZ - .2), L(.15, ZC + HZ * 1.3), L(-.15, ZC + HZ * 1.3)], sh(light, 1.08));
+        poly(g, [L(-1.4, 18), L(1.4, 18), L(1.4, 20), L(-1.4, 20)], dark, true);
+        poly(g, [L(-1.4, 20), L(1.4, 20), L(1.4, 20, .45), L(-1.4, 20, .45)], light, true);
       });
     }
     // Brückengeländer
@@ -649,30 +801,42 @@
   }
 
   /* ======================= Zug (3D-Kästen) ======================= */
-  function oBox(g, cx, cy, ang, L, Wd, z0, h, col, topCol, deco) {
+  // Quader entlang einer Richtung; lo/hi schneiden ihn längs ab (-1 … 1), z. B. am Tunnelportal
+  function oBox(g, cx, cy, ang, L, Wd, z0, h, col, topCol, deco, lo = -1, hi = 1) {
     const ux = Math.cos(ang), uy = Math.sin(ang), vx = -uy, vy = ux;
     const W3 = (a, b) => [cx + ux * a * L / 2 + vx * b * Wd / 2, cy + uy * a * L / 2 + vy * b * Wd / 2];
-    const faces = [[ux, uy, 1, -1, 1, 1, 'front'], [-ux, -uy, -1, 1, -1, -1, 'back'], [vx, vy, -1, 1, 1, 1, 'side'], [-vx, -vy, 1, -1, -1, -1, 'side']];
-    for (const [nx, ny, a1, b1, a2, b2, kind] of faces) {
+    const faces = [
+      [ux, uy, [hi, -1], [hi, 1], hi >= 1 ? 'front' : 'cut', W3(1, -1), W3(1, 1)],
+      [-ux, -uy, [lo, 1], [lo, -1], lo <= -1 ? 'back' : 'cut', W3(-1, 1), W3(-1, -1)],
+      [vx, vy, [lo, 1], [hi, 1], 'side', W3(-1, 1), W3(1, 1)],
+      [-vx, -vy, [hi, -1], [lo, -1], 'side', W3(1, -1), W3(-1, -1)]];
+    for (const [nx, ny, A, B, kind, fp, fq] of faces) {
       if (nx + ny <= 0.02) continue;
-      const p = W3(a1, b1), qq = W3(a2, b2), f = .8 + .17 * (ny - nx);
-      poly(g, [P(p[0], p[1], z0), P(qq[0], qq[1], z0), P(qq[0], qq[1], z0 + h), P(p[0], p[1], z0 + h)], sh(col, f), true);
-      if (deco) deco(g, kind, (t, z) => P(p[0] + (qq[0] - p[0]) * t, p[1] + (qq[1] - p[1]) * t, z0 + z));
+      const p = W3(...A), qq = W3(...B), f = .8 + .17 * (ny - nx);
+      const quad = [P(p[0], p[1], z0), P(qq[0], qq[1], z0), P(qq[0], qq[1], z0 + h), P(p[0], p[1], z0 + h)];
+      poly(g, quad, kind === 'cut' ? '#141519' : sh(col, f), true);
+      if (deco && kind !== 'cut') {
+        g.save(); g.beginPath(); quad.forEach((pt, i) => i ? g.lineTo(pt[0], pt[1]) : g.moveTo(pt[0], pt[1])); g.closePath(); g.clip();
+        deco(g, kind, (t, z) => P(fp[0] + (fq[0] - fp[0]) * t, fp[1] + (fq[1] - fp[1]) * t, z0 + z));
+        g.restore();
+      }
     }
-    const t = z0 + h;
-    poly(g, [W3(-1, -1), W3(1, -1), W3(1, 1), W3(-1, 1)].map(([x, y]) => P(x, y, t)), topCol || sh(col, 1.1), true);
+    poly(g, [W3(lo, -1), W3(hi, -1), W3(hi, 1), W3(lo, 1)].map(([x, y]) => P(x, y, z0 + h)), topCol || sh(col, 1.1), true);
     return (a, b, z) => { const w = W3(a, b); return P(w[0], w[1], z); };
   }
   const quadT = (Q, t0, t1, z0, z1) => [Q(t0, z0), Q(t1, z0), Q(t1, z1), Q(t0, z1)];
   const CARS = [{ L: 2.1, loco: true }, { L: 2.35 }, { L: 2.35 }, { L: 2.35 }, { L: 2.35, last: true }];
   const GAP = .14, TRAIN_LEN = CARS.reduce((a, c) => a + c.L + GAP, 0);
 
-  function drawCar(g, sFront, c) {
+  function carGeom(sFront, c) {
     const f = at(sFront), b = at(sFront - c.L);
-    const cx = (f.x + b.x) / 2, cy = (f.y + b.y) / 2, ang = Math.atan2(f.y - b.y, f.x - b.x), W = .62;
-    const ux = Math.cos(ang), uy = Math.sin(ang), vx = -uy, vy = ux;
-    poly(g, [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, bb]) => P(cx + ux * a * c.L / 2 + vx * bb * .42 + .12, cy + uy * a * c.L / 2 + vy * bb * .42 + .18, 0)), 'rgba(0,25,0,.28)');
-    for (const o of [-.34, .34]) oBox(g, cx + ux * o * c.L, cy + uy * o * c.L, ang, .5, .5, 0, 2.6, '#2a2c31', '#3a3d43');
+    return { f, b, cx: (f.x + b.x) / 2, cy: (f.y + b.y) / 2, ang: Math.atan2(f.y - b.y, f.x - b.x) };
+  }
+  function drawCar(g, sFront, c, lo = -1, hi = 1) {
+    const { cx, cy, ang } = carGeom(sFront, c), W = .62;
+    const ux = Math.cos(ang), uy = Math.sin(ang), vx = -uy, vy = ux, full = lo <= -1 && hi >= 1;
+    poly(g, [[lo, -1], [hi, -1], [hi, 1], [lo, 1]].map(([a, bb]) => P(cx + ux * a * c.L / 2 + vx * bb * .42 + .12, cy + uy * a * c.L / 2 + vy * bb * .42 + .18, 0)), 'rgba(0,25,0,.28)');
+    for (const o of [-.68, .68]) if (o - .2 >= lo && o + .2 <= hi) oBox(g, cx + ux * o * c.L / 2, cy + uy * o * c.L / 2, ang, .5, .5, 0, 2.6, '#2a2c31', '#3a3d43');
     if (c.loco) {
       const top = oBox(g, cx, cy, ang, c.L, W, 2.4, 9.6, '#cf2f26', '#7f8791', (g, kind, Q) => {
         if (kind === 'side') {
@@ -686,11 +850,12 @@
           poly(g, quadT(Q, .12, .24, 1.6, 2.6), '#fff4b0'); poly(g, quadT(Q, .76, .88, 1.6, 2.6), '#fff4b0');
           poly(g, quadT(Q, 0, 1, 3, 3.8), '#f2f2f2');
         }
-      });
-      const a1 = top(-.25, 0, 12), b2 = top(.15, 0, 18), c2 = top(.45, 0, 12);
-      line(g, a1, b2, '#30343a', 1); line(g, c2, b2, '#30343a', 1);
-      line(g, top(.05, -.8, 18.5), top(.25, .8, 18.5), '#30343a', 1);
-      box(g, cx - .12 * ux - .11, cy - .12 * uy - .11, 12, .22, .22, 1.2, '#5f666f');
+      }, lo, hi);
+      if (full) {
+        const a1 = top(-.25, 0, 12), b2 = top(.15, 0, 18), c2 = top(.45, 0, 12);
+        line(g, a1, b2, '#30343a', 1); line(g, c2, b2, '#30343a', 1);
+        line(g, top(.05, -.8, 18.5), top(.25, .8, 18.5), '#30343a', 1);
+      }
     } else {
       oBox(g, cx, cy, ang, c.L, W, 2.4, 9, '#e9ebee', '#a3a9b2', (g, kind, Q) => {
         if (kind === 'side') {
@@ -702,38 +867,41 @@
           poly(g, quadT(Q, .3, .7, 0, 8), '#3a3f47');
           if (c.last && kind === 'back') { poly(g, quadT(Q, .08, .2, 1.4, 2.4), '#ff3b2f'); poly(g, quadT(Q, .8, .92, 1.4, 2.4), '#ff3b2f'); }
         }
-      });
-      const tp = (a, bb) => P(cx + ux * a + vx * bb, cy + uy * a + vy * bb, 11.6);
-      line(g, tp(-c.L * .35, 0), tp(c.L * .35, 0), 'rgba(255,255,255,.35)');
+      }, lo, hi);
+      const r0 = Math.max(-.7, lo), r1 = Math.min(.7, hi);
+      if (r1 > r0) { const tp = a => P(cx + ux * a * c.L / 2, cy + uy * a * c.L / 2, 11.6); line(g, tp(r0), tp(r1), 'rgba(255,255,255,.35)'); }
     }
   }
-  function carKey(sFront, c) { const f = at(sFront), b = at(sFront - c.L); return Math.max(f.x + f.y, b.x + b.y) + .45; }
 
   /* ======================= Rendering ======================= */
   const ctx = world.getContext('2d');
-  const lc = document.createElement('canvas'), lx = lc.getContext('2d');
-  let PX = 2, W = 0, H = 0, ready = false, camX = 0, camY = 0, camInit = false;
+  let PX = 2, S = 2, W = 0, H = 0, ready = false, camX = 0, camY = 0, camInit = false;
   const cache = new Map(), smoke = [];
 
   function sprite(o) {
     let c = cache.get(o.ck); if (c) return c;
     const [l, rr, u, d] = o.ext;
     c = document.createElement('canvas'); c.width = Math.ceil(l + rr); c.height = Math.ceil(u + d);
-    OX = l - o.sx; OY = u - o.sy;
+    const r0 = ROUND; ROUND = true; OX = l - o.sx; OY = u - o.sy;
     o.draw(c.getContext('2d'));
-    cache.set(o.ck, c); return c;
+    ROUND = r0; cache.set(o.ck, c); return c;
   }
-  function headS() { const s0 = TRAIN_LEN + .3, s1 = TL - .6; return s0 + (s1 - s0) * (1 - now() / total); }
-  const tunnelHidden = sMid => sIn > 0 && sMid > sIn + .6 && sMid < sOut - .9;
+  const S0 = () => TRAIN_LEN + .3, S1 = () => TL - .6;
+  function headS() { return S0() + (S1() - S0()) * (1 - now() / total); }
+  // Kamera zielt auf einen über die Strecke gemittelten Punkt → keine Zuckungen in Kurven
+  function camTarget(head) {
+    let x = 0, y = 0, n = 0;
+    for (let d = -5; d <= 3; d += .25) { const a = at(head - 1 + d); x += SX(a.x, a.y); y += SY(a.x, a.y, 6); n++; }
+    return [x / n, y / n + H * .06];
+  }
 
   function resize() {
     const vw = innerWidth || document.documentElement.clientWidth, vh = innerHeight || document.documentElement.clientHeight;
     if (vw < 50 || vh < 50) return false;
     const dpr = devicePixelRatio || 1;
     PX = Math.max(2, Math.round(vw / 640));
-    W = Math.ceil(vw / PX); H = Math.ceil(vh / PX);
+    S = PX * dpr; W = vw / PX; H = vh / PX;
     world.width = Math.round(vw * dpr); world.height = Math.round(vh * dpr);
-    lc.width = W; lc.height = H;
     return true;
   }
   function init() {
@@ -744,12 +912,15 @@
     }
   }
   function buildRouteBar() {
-    const segs = [['city', '#9aa3ad'], ['sub', '#8fc76a'], ['farm', '#d9c25a'], ['forest', '#3f7f45'], ['ind', '#b18a5a'], ['mtn', '#c7c3bb'], ['farm2', '#b9c96a'], ['town', '#9aa3ad']];
-    const len = {};
-    for (let i = 0; i < TN; i += 4) { const b = biome(TP[i][0], 29); len[b] = (len[b] || 0) + 1; }
-    const tot = Object.values(len).reduce((a, b) => a + b, 0), tr = $('routeTrack');
-    tr.querySelectorAll('span').forEach(s => s.remove());
-    segs.forEach(([b, c]) => { if (!len[b]) return; const s = document.createElement('span'); s.style.width = (len[b] / tot * 100) + '%'; s.style.background = c; tr.insertBefore(s, routeDone); });
+    const COL = { city: '#9aa3ad', sub: '#8fc76a', farm: '#d9c25a', forest: '#3f7f45', ind: '#b18a5a', mtn: '#c7c3bb', farm2: '#b9c96a', town: '#9aa3ad', tunnel: '#3a3633' };
+    const runs = [], a0 = S0() - CARS[0].L / 2, a1 = S1() - CARS[0].L / 2;
+    for (let sv = a0; sv <= a1; sv += .25) {
+      const p = at(sv), b = inTunnel(sv) ? 'tunnel' : biome(p.x, p.y);
+      if (runs.length && runs[runs.length - 1][0] === b) runs[runs.length - 1][1] += .25; else runs.push([b, .25]);
+    }
+    const tot = runs.reduce((a, r) => a + r[1], 0), tr = $('routeTrack');
+    tr.querySelectorAll('span').forEach(x => x.remove());
+    runs.forEach(([b, l]) => { const x = document.createElement('span'); x.style.width = (l / tot * 100) + '%'; x.style.background = COL[b]; if (b === 'tunnel') x.title = 'Tunnel'; tr.insertBefore(x, routeDone); });
   }
 
   let lastT = performance.now(), lastEmit = 0;
@@ -766,24 +937,48 @@
       const prog = 1 - frac;
       routeDone.style.width = (prog * 100) + '%'; routeLoco.style.left = (prog * 100) + '%';
       const head = headS(), hp = at(head - CARS[0].L / 2);
-      const tx = SX(hp.x, hp.y), ty = SY(hp.x, hp.y, 6) + H * .06;
+      const [tx, ty] = camTarget(head);
       if (!camInit) { camX = tx; camY = ty; camInit = true; }
-      const k = 1 - Math.pow(.9, dt / 16);
+      const k = 1 - Math.exp(-dt / (scrubbing ? 90 : 260));
       camX += (tx - camX) * k; camY += (ty - camY) * k;
-      const offX = Math.round(W / 2 - camX), offY = Math.round(H / 2 - camY);
+      const offX = W / 2 - camX, offY = H / 2 - camY;          // nicht gerundet → butterweiche Kamerafahrt
 
-      lx.imageSmoothingEnabled = false;
-      lx.fillStyle = '#6fa848'; lx.fillRect(0, 0, W, H);
-      lx.drawImage(ground, -offX, -offY, W, H, 0, 0, W, H);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = '#6fa848'; ctx.fillRect(0, 0, world.width, world.height);
+      ctx.setTransform(S, 0, 0, S, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      const gx = Math.max(0, Math.floor(-offX)), gy = Math.max(0, Math.floor(-offY));
+      const gw = Math.min(ground.width - gx, Math.ceil(W) + 2), gh = Math.min(ground.height - gy, Math.ceil(H) + 2);
+      if (gw > 0 && gh > 0) ctx.drawImage(ground, gx, gy, gw, gh, gx + offX, gy + offY, gw, gh);
 
-      const list = [];
+      const list = [], ghosts = [];
       for (const o of objs) {
         const sx = o.sx + offX, sy = o.sy + offY, e = o.ext;
         if (sx + e[1] < 0 || sx - e[0] > W || sy + e[3] < 0 || sy - e[2] > H) continue;
         list.push({ k: o.k, o, sx, sy });
       }
+      // Zug: Wagen werden an den Tunnelportalen abgeschnitten; der Teil im Berg erscheint als Röntgen-Silhouette
       let s = head;
-      CARS.forEach(c => { const mid = s - c.L / 2, sF = s; if (!tunnelHidden(mid)) list.push({ k: carKey(sF, c), dyn: g => drawCar(g, sF, c) }); s -= c.L + GAP; });
+      for (const c of CARS) {
+        const sF = s, sB = s - c.L, toA = sv => -1 + 2 * (sv - sB) / c.L, pieces = [];
+        if (sIn < 0 || sF <= sIn || sB >= sOut) pieces.push([-1, 1, false]);
+        else {
+          if (sB < sIn) pieces.push([-1, toA(sIn), false]);
+          pieces.push([Math.max(-1, toA(sIn)), Math.min(1, toA(sOut)), true]);
+          if (sF > sOut) pieces.push([toA(sOut), 1, false]);
+        }
+        const gm = carGeom(sF, c);
+        for (const [lo, hi, inside] of pieces) {
+          if (hi - lo < .01) continue;
+          const draw = g => drawCar(g, sF, c, lo, hi);
+          if (inside) { ghosts.push(draw); continue; }
+          const pa = (lo + 1) / 2, pb = (hi + 1) / 2;
+          let key = Math.max(gm.b.x + (gm.f.x - gm.b.x) * pa + gm.b.y + (gm.f.y - gm.b.y) * pa, gm.b.x + (gm.f.x - gm.b.x) * pb + gm.b.y + (gm.f.y - gm.b.y) * pb) + .45;
+          if (PORTAL_KEY > 0 && sB < sOut + 3 && sF > sOut - .01) key = Math.max(key, PORTAL_KEY + .01);
+          list.push({ k: key, dyn: draw });
+        }
+        s -= c.L + GAP;
+      }
       for (const c of roadCars) {
         const len = c.b - c.a, p = ((t * c.sp + c.ph) % len + len) % len, pos = c.dir > 0 ? c.a + p : c.b - p;
         const x = c.ax === 'x' ? pos : c.c, y = c.ax === 'x' ? c.c : pos;
@@ -798,7 +993,6 @@
           shadowEll(g, w.x, w.y, 0, 6, 3);
           const b = P(w.x, w.y, 0), top = P(w.x, w.y, 62);
           g.fillStyle = '#f1f3f5'; g.beginPath(); g.moveTo(b[0] - 2, b[1]); g.lineTo(b[0] + 2, b[1]); g.lineTo(top[0] + 1, top[1]); g.lineTo(top[0] - 1, top[1]); g.closePath(); g.fill();
-          g.fillStyle = '#c9cdd2'; g.fillRect(b[0], top[1], 1, b[1] - top[1]);
           box(g, w.x - .12, w.y - .1, 61, .32, .2, 3, '#e6e9ec');
           const hub = P(w.x + .22, w.y + .1, 62.5), a = t * w.sp + w.ph;
           for (let i = 0; i < 3; i++) { const an = a + i * 2.094; line(g, hub, [hub[0] + Math.cos(an) * 20, hub[1] + Math.sin(an) * 20], '#f7f8f9', 2); }
@@ -807,9 +1001,25 @@
       }
       list.sort((a, b) => a.k - b.k);
       for (const it of list) {
-        if (it.dyn) { OX = offX; OY = offY; it.dyn(lx); continue; }
-        const c = sprite(it.o);
-        lx.drawImage(c, Math.round(it.sx - it.o.ext[0]), Math.round(it.sy - it.o.ext[2]));
+        if (it.dyn) { ROUND = false; OX = offX; OY = offY; it.dyn(ctx); ROUND = true; continue; }
+        ctx.drawImage(sprite(it.o), it.sx - it.o.ext[0], it.sy - it.o.ext[2]);
+      }
+      if (ghosts.length) {
+        ROUND = false; OX = offX; OY = offY;
+        ctx.save();
+        if (PORTAL_PTS) {            // Röntgenbild nicht über das Portal malen
+          const pts = PORTAL_PTS.map(([x, y, z]) => P(x, y, z)).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+          const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+          const lo = [], hi = [];
+          for (const p of pts) { while (lo.length > 1 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+          for (const p of pts.slice().reverse()) { while (hi.length > 1 && cr(hi[hi.length - 2], hi[hi.length - 1], p) <= 0) hi.pop(); hi.push(p); }
+          const hull = lo.slice(0, -1).concat(hi.slice(0, -1));
+          ctx.beginPath(); ctx.rect(-50, -50, W + 100, H + 100);
+          hull.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath();
+          ctx.clip('evenodd');
+        }
+        ctx.globalAlpha = .32; ghosts.forEach(d => d(ctx)); ctx.globalAlpha = 1;
+        ctx.restore(); ROUND = true;
       }
 
       // Rauch
@@ -824,17 +1034,14 @@
       for (let i = smoke.length - 1; i >= 0; i--) {
         const p = smoke[i]; p.x += p.vx * dt; p.y += p.vy * dt; p.r += .0045 * dt * p.big; p.life -= .00028 * dt;
         if (p.life <= 0) { smoke.splice(i, 1); continue; }
-        const R = Math.max(1, Math.round(p.r)), cx = Math.round(p.x + offX), cy = Math.round(p.y + offY);
-        if (cx < -R || cx > W + R || cy < -R || cy > H + R) continue;
-        lx.fillStyle = `rgba(245,245,245,${(Math.ceil(p.life * 5) / 5 * .7).toFixed(2)})`;
-        for (let dy = -R; dy <= R; dy++) { const w = Math.round(Math.sqrt(R * R - dy * dy)); lx.fillRect(cx - w, cy + dy, 2 * w + 1, 1); }
+        const cx = p.x + offX, cy = p.y + offY;
+        if (cx < -p.r || cx > W + p.r || cy < -p.r || cy > H + p.r) continue;
+        ctx.fillStyle = `rgba(245,245,245,${(p.life * .7).toFixed(3)})`;
+        ctx.beginPath(); ctx.arc(cx, cy, p.r, 0, 6.283); ctx.fill();
       }
 
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(lc, 0, 0, W, H, 0, 0, W * PX * (devicePixelRatio || 1), H * PX * (devicePixelRatio || 1));
-
       const tagP = [SX(hp.x, hp.y) + offX, SY(hp.x, hp.y, 30) + offY];
-      tag.style.transform = `translate(${tagP[0] * PX}px, ${tagP[1] * PX}px) translate(-50%, -100%)`;
+      tag.style.transform = `translate(${(tagP[0] * PX).toFixed(1)}px, ${(tagP[1] * PX).toFixed(1)}px) translate(-50%, -100%)`;
     }
     requestAnimationFrame(frame);
   }
